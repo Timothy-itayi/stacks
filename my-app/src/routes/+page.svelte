@@ -1,10 +1,10 @@
 <script>
   import GameCanvas from '../components/GameCanvas.svelte';
-  import HUD from '../components/HUD.svelte';
+ 
 </script>
 
 <main>
-  <HUD />
+ 
   <GameCanvas />
 </main>
 
