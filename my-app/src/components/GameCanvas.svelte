@@ -27,7 +27,7 @@
     fallingCrates: 0
   };
   
-  const targetHeight = 30;
+  const targetHeight = 11;
   
   // Game config
   const GAME_CONFIG = {
@@ -76,6 +76,18 @@
     rightWall.drawRect(GAME_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, GAME_HEIGHT);
     rightWall.endFill();
     app.stage.addChild(rightWall);
+    // Progress line (dynamic, shows how high you've stacked)
+const progressLine = new Graphics();
+app.stage.addChild(progressLine);
+
+// Optional: Target goal line (static reference line at target height)
+const targetLine = new Graphics();
+const targetY = GAME_HEIGHT - GROUND_HEIGHT - (targetHeight * 50); // scale: 1m = 50px
+targetLine.lineStyle(2, 0xffff00, 1); // yellow
+targetLine.moveTo(WALL_THICKNESS, targetY);
+targetLine.lineTo(GAME_WIDTH - WALL_THICKNESS, targetY);
+app.stage.addChild(targetLine);
+
 
     // Initialize game loop
     gameLoop = new GameLoop(physics, GAME_CONFIG);
@@ -122,6 +134,13 @@
       
       // Only use settled crates for height calculation
       settledHeight = physics.getCurrentStackHeight();
+      // Update dynamic progress line based on settled height
+progressLine.clear();
+progressLine.lineStyle(2, 0x00ff88, 1); // bright green
+const progressY = GAME_HEIGHT - GROUND_HEIGHT - (settledHeight * 50); // scale to pixels
+progressLine.moveTo(WALL_THICKNESS, progressY);
+progressLine.lineTo(GAME_WIDTH - WALL_THICKNESS, progressY);
+
       currentHeight = settledHeight; // Use settled height for display
       
       timeElapsed = state.timeElapsed;

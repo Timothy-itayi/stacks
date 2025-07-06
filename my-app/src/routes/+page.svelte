@@ -1,11 +1,10 @@
 <script>
-  import GameCanvas from '../components/GameCanvas.svelte';
- 
+	import GameCanvas from '../components/GameCanvas.svelte';
+  import GameScreen from '../components/GameCanvas.svelte'; // This is the wrapper that includes GameCanvas + HUD
 </script>
 
 <main>
- 
-  <GameCanvas />
+  <GameCanvas/>
 </main>
 
 <style>
