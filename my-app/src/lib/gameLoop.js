@@ -15,6 +15,14 @@ export class GameLoop {
     this.maxFloorCoverage = 0.8; // 80% floor coverage triggers game over
     this.baseDropSpeed = 1500; // gets faster over time
     
+    // Detonation mechanics
+    this.detonationCooldown = 5000; // 5 seconds cooldown
+    this.lastDetonationTime = 0;
+    this.canDetonate = true;
+    
+    // Block dropping pattern
+    this.explosiveBlockInterval = 6; // Drop explosive block every 6th block
+    
     // Timers
     this.lastDropTime = 0;
     this.gameStartTime = Date.now();
@@ -26,6 +34,8 @@ export class GameLoop {
     this.onWaveChange = null;
     // @ts-ignore
     this.onScoreChange = null;
+    // @ts-ignore
+    this.onCooldownChange = null;
     
     this.boundUpdate = this.update.bind(this);
   }
@@ -68,11 +78,25 @@ export class GameLoop {
   }
 
   // @ts-ignore
+  // @ts-ignore
   update(deltaTime) {
     if (this.gameState !== 'playing') return;
 
     const currentTime = Date.now();
     this.timeElapsed = (currentTime - this.gameStartTime) / 1000;
+
+    // Update detonation cooldown
+    if (!this.canDetonate) {
+      const cooldownRemaining = this.detonationCooldown - (currentTime - this.lastDetonationTime);
+      if (cooldownRemaining <= 0) {
+        this.canDetonate = true;
+        if (this.onCooldownChange) {
+          this.onCooldownChange(0);
+        }
+      } else if (this.onCooldownChange) {
+        this.onCooldownChange(cooldownRemaining / 1000);
+      }
+    }
 
     // Check win condition
     if (this.physics.getCurrentStackHeight() >= this.config.targetHeight) {
@@ -100,25 +124,34 @@ export class GameLoop {
   }
 
   dropBlock() {
-    const blockAliases = ['block', 'block00', 'block01', 'block02', 'block03', 'block04'];
-    const alias = blockAliases[Math.floor(Math.random() * blockAliases.length)];
-    
     // Random X position within walls
     const minX = this.config.wallThickness + 40;
     const maxX = this.config.gameWidth - this.config.wallThickness - 40;
     const x = Math.random() * (maxX - minX) + minX;
     const y = -80; // spawn above canvas
     
-    this.physics.createCrate(x, y, alias);
+    // Determine block type based on count and pattern
+    let blockType;
+    if ((this.blocksDropped + 1) % this.explosiveBlockInterval === 0) {
+      blockType = 'explosive';
+    } else {
+      // Random selection between available non-explosive blocks
+      const normalBlocks = ['dirt', 'stone', 'dirt_top'];
+      blockType = normalBlocks[Math.floor(Math.random() * normalBlocks.length)];
+    }
+    
+    this.physics.createCrate(x, y, blockType);
     this.blocksDropped++;
     
     // Award points for surviving drops
-    this.score += 10;
+    this.score += 5;
     this.notifyScoreChange();
 
     // Check for wave progression
     if (this.blocksDropped % this.blocksPerWave === 0) {
       this.currentWave++;
+      // Bonus points for completing a wave
+      this.score += this.currentWave * 25;
       this.notifyWaveChange();
     }
   }
@@ -134,29 +167,36 @@ export class GameLoop {
     }
   }
 
-  // Bonus actions
-  clearBottomRow() {
-    if (this.score >= 50) {
-      this.physics.clearBottomRow();
-      this.score -= 50;
-      this.notifyScoreChange();
-      return true;
+  // Detonation control
+  // @ts-ignore
+  tryDetonate(x, y) {
+    if (!this.canDetonate) return false;
+    
+    if (this.physics.selectExplosiveBlock(x, y)) {
+      this.canDetonate = false;
+      this.lastDetonationTime = Date.now();
+      
+      const success = this.physics.detonateSelectedBlock();
+      if (success) {
+        this.score += 50;
+        this.notifyScoreChange();
+      }
+      
+      if (this.onCooldownChange) {
+        this.onCooldownChange(5);
+      }
+      
+      return success;
     }
     return false;
   }
 
+  // Remove power-ups as they're no longer needed
+  clearBottomRow() {
+    return false;
+  }
+
   slowTime() {
-    if (this.score >= 30) {
-      this.dropInterval *= 2;
-      this.score -= 30;
-      this.notifyScoreChange();
-      
-      // Reset after 5 seconds
-      setTimeout(() => {
-        this.updateDifficulty();
-      }, 5000);
-      return true;
-    }
     return false;
   }
 
@@ -169,7 +209,10 @@ export class GameLoop {
       timeElapsed: this.timeElapsed,
       blocksDropped: this.blocksDropped,
       floorCoverage: this.physics.getFloorCoverage(),
-      nextDropIn: Math.max(0, this.dropInterval - (Date.now() - this.lastDropTime))
+      nextDropIn: Math.max(0, this.dropInterval - (Date.now() - this.lastDropTime)),
+      canDetonate: this.canDetonate,
+      detonationCooldown: this.canDetonate ? 0 : 
+        Math.max(0, this.detonationCooldown - (Date.now() - this.lastDetonationTime)) / 1000
     };
   }
 
