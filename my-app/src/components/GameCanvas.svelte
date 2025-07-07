@@ -1,16 +1,25 @@
-<script>
+<script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { Application, Graphics } from 'pixi.js';
   import * as physics from '../lib/physics.js';
-  import { GameLoop } from '../lib/GameLoop.js';
+  import { GameLoop } from '../lib/gameloop.js';
 
   // @ts-ignore
-  let container;
+  // @ts-ignore
+  // @ts-ignore
+  // @ts-ignore
+  let container: HTMLDivElement;
   let currentHeight = 0;
   let settledHeight = 0; // New: track only settled crates
   // @ts-ignore
-  let gameLoop;
-  let app;
+  // @ts-ignore
+  // @ts-ignore
+  // @ts-ignore
+  let gameLoop: GameLoop;
+  // @ts-ignore
+  // @ts-ignore
+  // @ts-ignore
+  let app: Application;
   
   // Game state
   let gameState = 'playing';
@@ -19,6 +28,12 @@
   let timeElapsed = 0;
   let floorCoverage = 0;
   let nextDropIn = 0;
+  let detonationCooldown = 0;
+  // @ts-ignore
+  // @ts-ignore
+  // @ts-ignore
+  // @ts-ignore
+  let chainMultiplier = 1;
   
   // Debug info
   let debugInfo = {
@@ -27,15 +42,13 @@
     fallingCrates: 0
   };
   
-  const targetHeight = 11;
-  
   // Game config
   const GAME_CONFIG = {
     gameWidth: 640,
     gameHeight: 780,
-    wallThickness: 60,
-    groundHeight: 60,
-    targetHeight: targetHeight
+    wallThickness: 30,
+    groundHeight: 30,
+    maxFloorCoverage: 0.7 // 70% floor coverage is game over
   };
 
   onMount(async () => {
@@ -45,115 +58,97 @@
     await app.init({
       width: GAME_WIDTH,
       height: GAME_HEIGHT,
-      backgroundColor: 0x18181b // darker, minimal bg (Tailwind gray-900)
+      backgroundColor: 0x111111 // Darker, more minimal background
     });
 
-    // @ts-ignore
     container.appendChild(app.canvas);
 
     await physics.loadAssets();
     await physics.initPhysics(app);
 
-    // Ground visual
+    // Ground visual - thinner
     const ground = new Graphics();
-    ground.beginFill(0x27272a); // Tailwind gray-800
+    ground.beginFill(0x222222); // Subtle dark gray
     ground.drawRect(0, GAME_HEIGHT - GROUND_HEIGHT, GAME_WIDTH, GROUND_HEIGHT);
     ground.endFill();
-    ground.lineStyle(1, 0x3f3f46); // Tailwind gray-700 thin line
+    ground.lineStyle(1, 0x333333); // Subtle line
     ground.moveTo(0, GAME_HEIGHT - GROUND_HEIGHT);
     ground.lineTo(GAME_WIDTH, GAME_HEIGHT - GROUND_HEIGHT);
     app.stage.addChild(ground);
 
-    // Side wall visuals
+    // Side wall visuals - thinner
     const leftWall = new Graphics();
-    leftWall.beginFill(0x27272a);
+    leftWall.beginFill(0x222222);
     leftWall.drawRect(0, 0, WALL_THICKNESS, GAME_HEIGHT);
     leftWall.endFill();
     app.stage.addChild(leftWall);
 
     const rightWall = new Graphics();
-    rightWall.beginFill(0x27272a);
+    rightWall.beginFill(0x222222);
     rightWall.drawRect(GAME_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, GAME_HEIGHT);
     rightWall.endFill();
     app.stage.addChild(rightWall);
-    // Progress line (dynamic, shows how high you've stacked)
-const progressLine = new Graphics();
-app.stage.addChild(progressLine);
 
-// Optional: Target goal line (static reference line at target height)
-const targetLine = new Graphics();
-const targetY = GAME_HEIGHT - GROUND_HEIGHT - (targetHeight * 50); // scale: 1m = 50px
-targetLine.lineStyle(2, 0xffff00, 1); // yellow
-targetLine.moveTo(WALL_THICKNESS, targetY);
-targetLine.lineTo(GAME_WIDTH - WALL_THICKNESS, targetY);
-app.stage.addChild(targetLine);
-
+    // Progress line - more subtle
+    const progressLine = new Graphics();
+    app.stage.addChild(progressLine);
 
     // Initialize game loop
     gameLoop = new GameLoop(physics, GAME_CONFIG);
     
     // Set up event listeners
     // @ts-ignore
-    gameLoop.onGameStateChange = (newState) => {
+    // @ts-ignore
+    // @ts-ignore
+    gameLoop.onGameStateChange = (newState: string) => {
       gameState = newState;
     };
     
     // @ts-ignore
-    gameLoop.onWaveChange = (wave) => {
+    // @ts-ignore
+    // @ts-ignore
+    gameLoop.onWaveChange = (wave: number) => {
       currentWave = wave;
     };
     
     // @ts-ignore
-    gameLoop.onScoreChange = (newScore) => {
+    // @ts-ignore
+    // @ts-ignore
+    gameLoop.onScoreChange = (newScore: number) => {
       score = newScore;
     };
 
-    // Create initial crates for demo
     // @ts-ignore
-    physics.createCrate(200, 50, 'block');
     // @ts-ignore
-    physics.createCrate(300, 0, 'block00');
     // @ts-ignore
-    physics.createCrate(400, 100, 'block01');
+    gameLoop.onCooldownChange = (cooldown: number) => {
+      detonationCooldown = cooldown;
+    };
 
+    // Create initial crates for demo
+    for (let i = 0; i < 3; i++) {
+      const x = WALL_THICKNESS + Math.random() * (GAME_WIDTH - WALL_THICKNESS * 2);
+      physics.createCrate(x, 50 + i * 60, 'explosive');
+    }
+    
     // Start the game loop
     gameLoop.start();
 
     app.ticker.add((delta) => {
       physics.update();
-      // @ts-ignore
       gameLoop.update(delta);
       
-      // Update UI state with enhanced physics info
-      // @ts-ignore
+      // Update UI state
       const state = gameLoop.getGameState();
       
       // Get physics debug info
       // @ts-ignore
       debugInfo = physics.getPhysicsDebugInfo();
       
-      // Only use settled crates for height calculation
-      settledHeight = physics.getCurrentStackHeight();
-      // Update dynamic progress line based on settled height
-progressLine.clear();
-progressLine.lineStyle(2, 0x00ff88, 1); // bright green
-const progressY = GAME_HEIGHT - GROUND_HEIGHT - (settledHeight * 50); // scale to pixels
-progressLine.moveTo(WALL_THICKNESS, progressY);
-progressLine.lineTo(GAME_WIDTH - WALL_THICKNESS, progressY);
-
-      currentHeight = settledHeight; // Use settled height for display
-      
       timeElapsed = state.timeElapsed;
-      floorCoverage = physics.getFloorCoverage(); // Use physics calculation
+      floorCoverage = physics.getFloorCoverage();
       nextDropIn = Math.ceil(state.nextDropIn / 1000);
-      
-      // Check win condition only with settled crates
-      // @ts-ignore
-      if (physics.hasReachedTargetHeight(targetHeight) && gameState === 'playing') {
-        gameState = 'won';
-        // @ts-ignore
-        gameLoop.onGameStateChange('won');
-      }
+      detonationCooldown = state.detonationCooldown;
       
       // Check game over condition
       // @ts-ignore
@@ -166,7 +161,6 @@ progressLine.lineTo(GAME_WIDTH - WALL_THICKNESS, progressY);
   });
 
   onDestroy(() => {
-    // @ts-ignore
     if (gameLoop) {
       gameLoop.destroy();
     }
@@ -174,9 +168,7 @@ progressLine.lineTo(GAME_WIDTH - WALL_THICKNESS, progressY);
 
   // Game actions
   function resetGame() {
-    // @ts-ignore
     physics.resetPhysics();
-    // @ts-ignore
     gameLoop.reset();
     currentHeight = 0;
     settledHeight = 0;
@@ -185,203 +177,138 @@ progressLine.lineTo(GAME_WIDTH - WALL_THICKNESS, progressY);
 
   function pauseGame() {
     if (gameState === 'playing') {
-      // @ts-ignore
       gameLoop.pause();
     } else if (gameState === 'paused') {
-      // @ts-ignore
       gameLoop.resume();
     }
   }
 
-  function clearBottomRow() {
-    const removedCount = physics.clearBottomRow();
-    // @ts-ignore
-    gameLoop.addScore(removedCount * 10); // Bonus points for cleared crates
-  }
-
-  function slowTime() {
-    // @ts-ignore
-    gameLoop.slowTime();
-  }
-
-  function dropCrate() {
-    // Manual crate drop for testing
-    const x = GAME_CONFIG.wallThickness + Math.random() * (GAME_CONFIG.gameWidth - GAME_CONFIG.wallThickness * 2);
-    // @ts-ignore
-    physics.createCrate(x, 50, 'block');
+  // @ts-ignore
+  // @ts-ignore
+  // @ts-ignore
+  function handleCanvasClick(event: MouseEvent) {
+    if (gameState !== 'playing') return;
+    
+    // Get click coordinates relative to canvas
+    const rect = container.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    // Try to detonate
+    gameLoop.tryDetonate(x, y);
   }
 
   // Reactive statements for game state
-  $: progressPercent = (settledHeight / targetHeight) * 100;
   $: floorCoveragePercent = floorCoverage * 100;
   $: isGameOver = gameState === 'gameOver';
-  $: isWon = gameState === 'won';
   $: isPaused = gameState === 'paused';
 </script>
 
-<!-- Layout -->
-<div class="min-h-screen flex flex-col justify-end items-center pb-5 relative bg-gray-900">
-  <!-- Canvas container: subtle border, softer rounded corners, subtle shadow -->
+<!-- Layout - Minimalistic version -->
+<div class="min-h-screen flex flex-col justify-end items-center pb-5 relative bg-neutral-900">
+  <!-- Canvas container with click handler -->
   <div
     bind:this={container}
-    class="w-[640px] h-[780px] rounded-xl overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.6)] border border-gray-700"
+    class="w-[640px] h-[780px] border border-neutral-800 overflow-hidden relative"
+    on:click={handleCanvasClick}
   ></div>
 
-  <!-- HUD top-left: cleaner with reduced padding, smaller font, translucent background -->
-  <div class="absolute top-4 left-4 bg-black/50 text-gray-100 rounded-xl p-3 shadow-lg w-60 space-y-2 font-sans select-none">
-    <h1 class="text-lg font-semibold flex items-center gap-2 tracking-wide">🪵 Crate Stacker</h1>
+  <!-- HUD top-left: minimal design -->
+  <div class="absolute top-4 left-4 bg-neutral-900/80 text-neutral-200 p-3 w-56 space-y-2 font-mono text-sm">
+    <div class="flex items-center justify-between">
+      <span class="text-neutral-400">Score</span>
+      <span>{score}</span>
+    </div>
 
-    <div class="flex items-center justify-between text-sm font-medium">
-      <span>Height:</span>
-      <span class="text-lg font-bold">{settledHeight.toFixed(1)} m</span>
+    <div class="flex items-center justify-between">
+      <span class="text-neutral-400">Wave</span>
+      <span>{currentWave}</span>
     </div>
 
     <div class="space-y-1">
-      <div class="flex justify-between text-xs text-gray-300">
-        <span>Goal</span>
-        <span>{targetHeight} m</span>
-      </div>
-      <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-        <div
-          class="h-full bg-green-400 transition-all duration-300"
-          style="width: {Math.min(progressPercent, 100)}%"
-        ></div>
-      </div>
-    </div>
-
-    <div class="flex items-center justify-between text-sm font-medium">
-      <span>Wave:</span>
-      <span class="text-lg font-bold">{currentWave}</span>
-    </div>
-
-    <div class="flex items-center justify-between text-sm font-medium">
-      <span>Score:</span>
-      <span class="text-lg font-bold">{score}</span>
-    </div>
-
-    <!-- Debug info -->
-    <div class="text-xs text-gray-400 border-t border-gray-600 pt-2">
-      <div class="flex justify-between">
-        <span>Settled:</span>
-        <span>{debugInfo.settledCrates}</span>
-      </div>
-      <div class="flex justify-between">
-        <span>Falling:</span>
-        <span>{debugInfo.fallingCrates}</span>
-      </div>
-      <div class="flex justify-between">
-        <span>Total:</span>
-        <span>{debugInfo.totalCrates}</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- HUD top-right: Game status and controls -->
-  <div class="absolute top-4 right-4 bg-black/50 text-gray-100 rounded-xl p-3 shadow-lg w-60 space-y-2 font-sans select-none">
-    <div class="flex items-center justify-between text-sm font-medium">
-      <span>Time:</span>
-      <span class="text-lg font-bold">{timeElapsed.toFixed(0)}s</span>
-    </div>
-
-    <div class="flex items-center justify-between text-sm font-medium">
-      <span>Next Drop:</span>
-      <span class="text-lg font-bold">{nextDropIn}s</span>
-    </div>
-
-    <div class="space-y-1">
-      <div class="flex justify-between text-xs text-gray-300">
-        <span>Floor Coverage</span>
+      <div class="flex justify-between text-xs text-neutral-400">
+        <span>Floor Space</span>
         <span>{floorCoveragePercent.toFixed(0)}%</span>
       </div>
-      <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+      <div class="w-full h-1 bg-neutral-800">
         <div
           class="h-full transition-all duration-300"
+          class:bg-emerald-500={floorCoveragePercent <= 40}
+          class:bg-orange-500={floorCoveragePercent > 40 && floorCoveragePercent <= 60}
           class:bg-red-500={floorCoveragePercent > 60}
-          class:bg-yellow-500={floorCoveragePercent > 40 && floorCoveragePercent <= 60}
-          class:bg-green-400={floorCoveragePercent <= 40}
           style="width: {Math.min(floorCoveragePercent, 100)}%"
         ></div>
       </div>
     </div>
+  </div>
 
-    <div class="flex gap-2">
+  <!-- HUD top-right: minimal stats -->
+  <div class="absolute top-4 right-4 bg-neutral-900/80 text-neutral-200 p-3 w-56 space-y-2 font-mono text-sm">
+    <div class="flex items-center justify-between">
+      <span class="text-neutral-400">Time</span>
+      <span>{timeElapsed.toFixed(0)}s</span>
+    </div>
+
+    <div class="flex items-center justify-between">
+      <span class="text-neutral-400">Next Drop</span>
+      <span>{nextDropIn}s</span>
+    </div>
+
+    <div class="flex gap-2 mt-2">
       <button
         on:click={pauseGame}
-        class="flex-1 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
+        class="flex-1 px-2 py-1 border border-neutral-700 hover:bg-neutral-800 text-xs transition-colors"
       >
         {isPaused ? 'Resume' : 'Pause'}
       </button>
       <button
         on:click={resetGame}
-        class="flex-1 px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors"
+        class="flex-1 px-2 py-1 border border-neutral-700 hover:bg-neutral-800 text-xs transition-colors"
       >
         Reset
       </button>
     </div>
   </div>
 
-  <!-- Power-ups and testing panel -->
-  <div class="absolute bottom-4 left-4 bg-black/50 text-gray-100 rounded-xl p-3 shadow-lg w-60 space-y-2 font-sans select-none">
-    <h2 class="text-sm font-semibold">Power-ups</h2>
+  <!-- Detonation cooldown indicator -->
+  <div class="absolute bottom-4 left-4 bg-neutral-900/80 text-neutral-200 p-3 w-56 space-y-2 font-mono text-sm">
+    <h2 class="text-xs text-neutral-400">Detonation</h2>
     
-    <button
-      on:click={clearBottomRow}
-      disabled={score < 50}
-      class="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
-    >
-      Clear Bottom Row (50 pts)
-    </button>
-    
-    <button
-      on:click={slowTime}
-      disabled={score < 30}
-      class="w-full px-3 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
-    >
-      Slow Time (30 pts)
-    </button>
+    <div class="space-y-1">
+      <div class="flex justify-between text-xs">
+        <span>Status</span>
+        <span class:text-emerald-500={detonationCooldown === 0} class:text-orange-500={detonationCooldown > 0}>
+          {detonationCooldown === 0 ? 'Ready' : `Cooldown: ${detonationCooldown.toFixed(1)}s`}
+        </span>
+      </div>
+      {#if detonationCooldown > 0}
+        <div class="w-full h-1 bg-neutral-800">
+          <div
+            class="h-full bg-orange-500 transition-all duration-300"
+            style="width: {Math.max(0, (1 - detonationCooldown / 5) * 100)}%"
+          ></div>
+        </div>
+      {/if}
+    </div>
 
-    <!-- Test button -->
-    <button
-      on:click={dropCrate}
-      class="w-full px-3 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded-lg transition-colors"
-    >
-      Drop Test Crate
-    </button>
+    <div class="text-xs text-neutral-400 mt-2">
+      <p>Click on an explosive block to detonate it and clear nearby blocks.</p>
+    </div>
   </div>
 
   <!-- Game Over Modal -->
   {#if isGameOver}
-    <div class="absolute inset-0 bg-black/70 flex items-center justify-center">
-      <div class="bg-gray-800 text-white p-8 rounded-xl shadow-2xl text-center max-w-md">
-        <h2 class="text-3xl font-bold mb-4 text-red-400">Game Over!</h2>
-        <p class="text-lg mb-2">Floor got too crowded!</p>
-        <p class="text-sm text-gray-300 mb-4">Final Score: <span class="font-bold">{score}</span></p>
-        <p class="text-sm text-gray-300 mb-4">Final Height: <span class="font-bold">{settledHeight.toFixed(1)}m</span></p>
-        <p class="text-sm text-gray-300 mb-6">Wave: <span class="font-bold">{currentWave}</span> | Time: <span class="font-bold">{timeElapsed.toFixed(0)}s</span></p>
+    <div class="absolute inset-0 bg-black/90 flex items-center justify-center font-mono">
+      <div class="bg-neutral-900 text-neutral-200 p-6 border border-neutral-800">
+        <h2 class="text-xl mb-4">Game Over</h2>
+        <p class="text-sm mb-2 text-neutral-400">Floor too crowded</p>
+        <p class="text-sm mb-4">Final Score: {score}</p>
+        <p class="text-sm mb-4">Waves Survived: {currentWave}</p>
         <button
           on:click={resetGame}
-          class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors"
+          class="w-full px-4 py-2 border border-neutral-700 hover:bg-neutral-800 text-sm transition-colors"
         >
-          Play Again
-        </button>
-      </div>
-    </div>
-  {/if}
-
-  <!-- Victory Modal -->
-  {#if isWon}
-    <div class="absolute inset-0 bg-black/70 flex items-center justify-center">
-      <div class="bg-gray-800 text-white p-8 rounded-xl shadow-2xl text-center max-w-md">
-        <h2 class="text-3xl font-bold mb-4 text-green-400">Victory!</h2>
-        <p class="text-lg mb-2">You reached the target height!</p>
-        <p class="text-sm text-gray-300 mb-4">Final Score: <span class="font-bold">{score}</span></p>
-        <p class="text-sm text-gray-300 mb-4">Final Height: <span class="font-bold">{settledHeight.toFixed(1)}m</span></p>
-        <p class="text-sm text-gray-300 mb-6">Wave: <span class="font-bold">{currentWave}</span> | Time: <span class="font-bold">{timeElapsed.toFixed(0)}s</span></p>
-        <button
-          on:click={resetGame}
-          class="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors"
-        >
-          Play Again
+          Retry
         </button>
       </div>
     </div>
@@ -389,12 +316,12 @@ progressLine.lineTo(GAME_WIDTH - WALL_THICKNESS, progressY);
 
   <!-- Pause overlay -->
   {#if isPaused}
-    <div class="absolute inset-0 bg-black/50 flex items-center justify-center">
-      <div class="bg-gray-800 text-white p-6 rounded-xl shadow-2xl text-center">
-        <h2 class="text-2xl font-bold mb-4">Game Paused</h2>
+    <div class="absolute inset-0 bg-black/90 flex items-center justify-center font-mono">
+      <div class="bg-neutral-900 text-neutral-200 p-6 border border-neutral-800">
+        <h2 class="text-xl mb-4">Paused</h2>
         <button
           on:click={pauseGame}
-          class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors"
+          class="w-full px-4 py-2 border border-neutral-700 hover:bg-neutral-800 text-sm transition-colors"
         >
           Resume
         </button>

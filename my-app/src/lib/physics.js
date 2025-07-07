@@ -1,6 +1,7 @@
+// @ts-nocheck
 // lib/physics.js
 import matter from 'matter-js';
-import { Sprite, Assets } from 'pixi.js';
+import { Sprite, Assets, Graphics, ParticleContainer, Point } from 'pixi.js';
 
 // @ts-ignore
 const { Engine, Bodies, World, Runner, Mouse, MouseConstraint, Events, Body } = matter;
@@ -16,7 +17,85 @@ let crates = [];
 let mouseConstraint;
 
 // Available block aliases
-const BLOCK_ALIASES = ['block', 'block00', 'block01', 'block02', 'block03', 'block04'];
+const BLOCK_ALIASES = ['dirt', 'explosive', 'stone', 'dirt_top'];
+
+/** @type {Array<Particle>} */
+let particles = [];
+const PARTICLE_COUNT = 25;
+const EXPLOSION_FORCE = 0.004;
+const EXPLOSION_RADIUS = 150;
+
+// Chain reaction tracking
+let chainReactionCount = 0;
+let lastExplosionTime = 0;
+const CHAIN_REACTION_WINDOW = 800;
+const MAX_PARTICLES = 200; // Limit total particles
+const MAX_CRATES = 100; // Limit total crates
+
+// Track the currently selected explosive block
+let selectedExplosiveBlock = null;
+
+// Block properties
+const BLOCK_PROPERTIES = {
+  dirt: {
+    density: 0.001,
+    restitution: 0.1,
+    friction: 0.5,
+    frictionAir: 0.02,
+    color: 0x96CEB4
+  },
+  explosive: {
+    density: 0.001,
+    restitution: 0.1,
+    friction: 0.5,
+    frictionAir: 0.02,
+    color: 0xFF4500
+  },
+  stone: {
+    density: 0.002, // Heavier
+    restitution: 0.05, // Less bouncy
+    friction: 0.8, // More friction
+    frictionAir: 0.01,
+    color: 0x8B4513
+  },
+  dirt_top: {
+    density: 0.001,
+    restitution: 0.1,
+    friction: 0.5,
+    frictionAir: 0.02,
+    color: 0x8B4513
+  }
+};
+
+class Particle extends Graphics {
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @param {number} angle
+   * @param {number} speed
+   * @param {number} color
+   */
+  constructor(x, y, angle, speed, color) {
+    super();
+    this.position.set(x, y);
+    this.velocity = new Point(
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed
+    );
+    this.alpha = 1;
+    this.beginFill(color);
+    this.circle(0, 0, 3);
+    this.endFill();
+  }
+
+  update() {
+    this.position.x += this.velocity.x;
+    this.position.y += this.velocity.y;
+    this.velocity.y += 0.1; // gravity
+    this.alpha *= 0.95; // fade out
+    return this.alpha > 0.1;
+  }
+}
 
 // @ts-ignore
 export async function initPhysics(pixiApp) {
@@ -34,16 +113,19 @@ export async function initPhysics(pixiApp) {
   // Ground
   const ground = Bodies.rectangle(width / 2, height - 30, width, 60, {
     isStatic: true,
-    restitution: 0.3
+    restitution: 0.3,
+    label: 'ground'
   });
   World.add(world, ground);
 
   // Walls
   const leftWall = Bodies.rectangle(wallThickness / 2, height / 2, wallThickness, height, {
-    isStatic: true
+    isStatic: true,
+    label: 'wall'
   });
   const rightWall = Bodies.rectangle(width - wallThickness / 2, height / 2, wallThickness, height, {
-    isStatic: true
+    isStatic: true,
+    label: 'wall'
   });
   World.add(world, leftWall);
   World.add(world, rightWall);
@@ -55,6 +137,15 @@ export async function initPhysics(pixiApp) {
     constraint: { stiffness: 0.2, render: { visible: false } }
   });
   World.add(world, mouseConstraint);
+
+  // Remove the old collision handler and add new one for basic collisions
+  Events.on(engine, 'collisionStart', (event) => {
+    event.pairs.forEach((pair) => {
+      const { bodyA, bodyB } = pair;
+      // Add any necessary collision handling here
+      // But don't trigger explosions automatically
+    });
+  });
 
   Runner.run(runner, engine);
   crates = [];
@@ -68,119 +159,175 @@ export async function loadAssets() {
       {
         name: 'bricks',
         assets: [
-          { alias: 'block', src: '/assets/block.png' },
-          { alias: 'block00', src: '/assets/block00.png' },
-          { alias: 'block01', src: '/assets/block01.png' },
-          { alias: 'block02', src: '/assets/block02.png' },
-          { alias: 'block03', src: '/assets/block03.png' },
-          { alias: 'block04', src: '/assets/block04.png' },
+          { alias: 'dirt', src: '/assets/extra_dirt_detail.png' },
+          { alias: 'explosive', src: '/assets/explosive.png' },
+          { alias: 'stone', src: '/assets/detail_stone.png' },
+          { alias: 'dirt_top', src: '/assets/extra_dirt_top.png' }
         ]
       }
     ]
   };
   
   try {
+    console.log('Initializing assets with manifest:', manifest);
     await Assets.init({ manifest });
+    console.log('Assets initialized, loading bundle...');
     await Assets.loadBundle('bricks');
     console.log('Assets loaded successfully');
+    
+    // Verify each texture loaded correctly
+    const loadedTextures = manifest.bundles[0].assets.map(asset => {
+      const texture = Assets.get(asset.alias);
+      console.log(`Texture ${asset.alias}:`, texture ? 'loaded' : 'failed to load');
+      return texture;
+    });
+    
+    if (loadedTextures.some(texture => !texture)) {
+      console.error('Some textures failed to load');
+      return false;
+    }
+    
+    return true;
   } catch (error) {
     console.error('Failed to load assets:', error);
     // Fallback: create colored rectangles if assets fail to load
     return false;
   }
-  return true;
 }
 
-// @ts-ignore
-export function createCrate(x, y, alias = null) {
-  // If no alias provided, pick a random one
-  if (!alias) {
-    // @ts-ignore
-    alias = BLOCK_ALIASES[Math.floor(Math.random() * BLOCK_ALIASES.length)];
-  }
+/**
+ * @param {number} width
+ * @param {number} height
+ * @param {string} alias
+ * @returns {Graphics}
+ */
+function createFallbackSprite(width, height, alias) {
+  const graphics = new Graphics();
+  const properties = BLOCK_PROPERTIES[alias] || BLOCK_PROPERTIES.dirt;
   
-  const width = 80;
-  const height = 80;
+  graphics.beginFill(properties.color);
+  graphics.roundRect(-width/2, -height/2, width, height, 8);
+  graphics.endFill();
+  
+  graphics.lineStyle(2, 0x000000, 0.3);
+  graphics.roundRect(-width/2, -height/2, width, height, 8);
+  
+  return graphics;
+}
+
+/**
+ * Creates a new block
+ */
+export function createCrate(x, y, alias = 'dirt') {
+  // Safety check for max crates
+  if (crates.length >= MAX_CRATES) {
+    const oldestCrate = crates[0];
+    removeBlock(oldestCrate.body);
+  }
+
+  // Validate block type
+  if (!BLOCK_PROPERTIES[alias]) {
+    console.warn(`Invalid block type: ${alias}, falling back to dirt`);
+    alias = 'dirt';
+  }
+
+  const width = 40;
+  const height = 40;
+  const properties = BLOCK_PROPERTIES[alias];
 
   const body = Bodies.rectangle(x, y, width, height, {
-    restitution: 0.1,
-    friction: 0.5,
-    frictionAir: 0.02,
-    density: 0.001
+    restitution: properties.restitution,
+    friction: properties.friction,
+    frictionAir: properties.frictionAir,
+    density: properties.density
   });
 
+  body.blockType = alias;
+  body.isExploded = false;
+  body.createdAt = Date.now();
+
   let sprite;
-  
   try {
-    // Try to get the texture
-    // @ts-ignore
     const texture = Assets.get(alias);
     if (texture) {
       sprite = new Sprite(texture);
+      sprite.anchor.set(0.5);
+      sprite.width = width;
+      sprite.height = height;
+      
+      // Add highlight effect for explosive blocks
+      if (alias === 'explosive') {
+        const highlight = new Graphics();
+        highlight.lineStyle(2, 0xffff00, 0.5);
+        highlight.drawRect(-width/2, -height/2, width, height);
+        sprite.addChild(highlight);
+        highlight.visible = false;
+        sprite.highlight = highlight;
+      }
     } else {
       throw new Error(`Texture ${alias} not found`);
     }
   } catch (error) {
     console.warn(`Failed to load texture ${alias}, using fallback`, error);
-    // Create a colored rectangle as fallback
     sprite = createFallbackSprite(width, height, alias);
   }
 
-  sprite.anchor.set(0.5);
-  sprite.width = width;
-  sprite.height = height;
-  // @ts-ignore
-  app.stage.addChild(sprite);
+  if (!sprite) return null;
 
-  // Link sprite to body for easy removal later
-  // @ts-ignore
+  app.stage.addChild(sprite);
   body.sprite = sprite;
 
   const crateObj = { body, sprite };
   crates.push(crateObj);
-  // @ts-ignore
   World.add(world, body);
 
   return crateObj;
 }
 
-// @ts-ignore
-function createFallbackSprite(width, height, alias) {
-  // Create a colored rectangle using PIXI Graphics as fallback
-  // @ts-ignore
-  const graphics = new PIXI.Graphics();
-  
-  // Different colors for different aliases
-  const colors = {
-    'block': 0x8B4513,    // Brown
-    'block00': 0xFF6B6B,  // Red
-    'block01': 0x4ECDC4,  // Teal
-    'block02': 0x45B7D1,  // Blue
-    'block03': 0x96CEB4,  // Green
-    'block04': 0xFECA57   // Yellow
-  };
-  
-  // @ts-ignore
-  const color = colors[alias] || 0x8B4513;
-  
-  graphics.beginFill(color);
-  graphics.drawRoundedRect(-width/2, -height/2, width, height, 8);
-  graphics.endFill();
-  
-  // Add border
-  graphics.lineStyle(2, 0x000000, 0.3);
-  graphics.drawRoundedRect(-width/2, -height/2, width, height, 8);
-  
-  return graphics;
-}
-
 export function update() {
-  // @ts-ignore
-  crates.forEach(({ body, sprite }) => {
-    sprite.x = body.position.x;
-    sprite.y = body.position.y;
-    sprite.rotation = body.angle;
-  });
+  try {
+    // Clean up invalid crates
+    crates = crates.filter(crate => {
+      if (!crate || !crate.body || !crate.sprite) {
+        if (crate) {
+          removeBlock(crate.body);
+        }
+        return false;
+      }
+      return true;
+    });
+
+    // Update valid crates
+    crates.forEach(({ body, sprite }) => {
+      if (body && sprite) {
+        sprite.x = body.position.x;
+        sprite.y = body.position.y;
+        sprite.rotation = body.angle;
+      }
+    });
+
+    // Limit and update particles
+    while (particles.length > MAX_PARTICLES) {
+      const oldestParticle = particles.shift();
+      if (oldestParticle && oldestParticle.parent) {
+        oldestParticle.parent.removeChild(oldestParticle);
+      }
+    }
+
+    particles = particles.filter(particle => {
+      if (!particle) return false;
+      const alive = particle.update();
+      if (!alive && particle.parent) {
+        particle.parent.removeChild(particle);
+      }
+      return alive;
+    });
+
+    // Clean up off-screen crates
+    removeOffScreenCrates();
+  } catch (error) {
+    console.error('Update error:', error);
+  }
 }
 
 export function getCurrentStackHeight() {
@@ -214,6 +361,7 @@ export function getFloorCoverage() {
   
   for (let i = 0; i < floorSections; i++) {
     const sectionX = WALL_THICKNESS + (i * sectionWidth);
+    // @ts-ignore
     // @ts-ignore
     const sectionCenter = sectionX + sectionWidth / 2;
     
@@ -273,21 +421,27 @@ export function clearBottomRow() {
 }
 
 export function clearAllBodies() {
-  // @ts-ignore
-  if (!world) return;
-  
-  // @ts-ignore
-  for (const crate of crates) {
-    // Remove from physics world
-    World.remove(world, crate.body);
+  try {
+    // Make a copy of the array to avoid modification during iteration
+    const cratesToRemove = [...crates];
     
-    // Remove sprite from stage
-    if (crate.sprite && crate.sprite.parent) {
-      crate.sprite.parent.removeChild(crate.sprite);
-    }
+    cratesToRemove.forEach(crate => {
+      if (crate && crate.body) {
+        removeBlock(crate.body);
+      }
+    });
+    
+    // Clear arrays
+    crates = [];
+    particles = [];
+    
+    // Reset state
+    selectedExplosiveBlock = null;
+    chainReactionCount = 0;
+    lastExplosionTime = 0;
+  } catch (error) {
+    console.error('Clear bodies error:', error);
   }
-  
-  crates = [];
 }
 
 export function removeOffScreenCrates() {
@@ -360,4 +514,161 @@ export function isGameOverCondition() {
 export function resetPhysics() {
   clearAllBodies();
   // Reset any other physics state if needed
+}
+
+/**
+ * Trigger an explosion at the specified coordinates
+ */
+export function triggerExplosion(x, y) {
+  try {
+    const currentTime = Date.now();
+    
+    // Check if this is part of a chain reaction
+    if (currentTime - lastExplosionTime < CHAIN_REACTION_WINDOW) {
+      chainReactionCount++;
+    } else {
+      chainReactionCount = 1;
+    }
+    lastExplosionTime = currentTime;
+    
+    // Calculate multiplier based on chain reaction
+    const multiplier = Math.min(chainReactionCount, 3);
+    const particleCount = Math.min(
+      PARTICLE_COUNT * (1 + (multiplier - 1) * 0.5),
+      MAX_PARTICLES - particles.length
+    );
+    const explosionRadius = EXPLOSION_RADIUS * (1 + (multiplier - 1) * 0.1);
+    
+    // Create particles if space available
+    if (particles.length < MAX_PARTICLES) {
+      for (let i = 0; i < particleCount; i++) {
+        const angle = (Math.PI * 2 * i) / particleCount;
+        const speed = 1.5 + Math.random() * 2 * multiplier;
+        const particle = new Particle(x, y, angle, speed, 0xFF4500);
+        particles.push(particle);
+        app.stage.addChild(particle);
+      }
+    }
+
+    // Apply explosion force to nearby crates
+    const affectedBlocks = new Set();
+    const validCrates = crates.filter(crate => crate && crate.body && !crate.body.isExploded);
+    
+    validCrates.forEach(crate => {
+      const dx = crate.body.position.x - x;
+      const dy = crate.body.position.y - y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < explosionRadius) {
+        affectedBlocks.add(crate.body.id);
+        
+        // Apply force
+        const forceMagnitude = EXPLOSION_FORCE * multiplier * Math.pow(1 - distance / explosionRadius, 2);
+        const force = {
+          x: (dx / distance) * forceMagnitude,
+          y: (dy / distance) * forceMagnitude
+        };
+        
+        try {
+          Body.applyForce(crate.body, crate.body.position, force);
+        } catch (error) {
+          console.error('Force application error:', error);
+        }
+        
+        // Remove affected blocks with delay based on distance
+        setTimeout(() => {
+          try {
+            if (crate.body && !crate.body.isExploded) {
+              crate.body.isExploded = true;
+              removeBlock(crate.body);
+            }
+          } catch (error) {
+            console.error('Block removal error:', error);
+          }
+        }, distance * 2);
+      }
+    });
+    
+    return multiplier;
+  } catch (error) {
+    console.error('Explosion error:', error);
+    return 1;
+  }
+}
+
+/**
+ * Select an explosive block for detonation
+ */
+export function selectExplosiveBlock(x, y) {
+  // Deselect previous block
+  if (selectedExplosiveBlock && selectedExplosiveBlock.sprite.highlight) {
+    selectedExplosiveBlock.sprite.highlight.visible = false;
+  }
+  
+  // Find closest explosive block
+  let closestBlock = null;
+  let closestDistance = Infinity;
+  
+  crates.forEach(crate => {
+    if (crate.body.blockType === 'explosive' && !crate.body.isExploded) {
+      const dx = crate.body.position.x - x;
+      const dy = crate.body.position.y - y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < closestDistance && distance < 50) { // Within 50px radius
+        closestBlock = crate;
+        closestDistance = distance;
+      }
+    }
+  });
+  
+  // Highlight selected block
+  if (closestBlock && closestBlock.sprite.highlight) {
+    closestBlock.sprite.highlight.visible = true;
+    selectedExplosiveBlock = closestBlock;
+    return true;
+  }
+  
+  selectedExplosiveBlock = null;
+  return false;
+}
+
+/**
+ * Detonate the selected explosive block
+ */
+export function detonateSelectedBlock() {
+  if (selectedExplosiveBlock && !selectedExplosiveBlock.body.isExploded) {
+    const pos = selectedExplosiveBlock.body.position;
+    triggerExplosion(pos.x, pos.y);
+    selectedExplosiveBlock.body.isExploded = true;
+    removeBlock(selectedExplosiveBlock.body);
+    selectedExplosiveBlock = null;
+    return true;
+  }
+  return false;
+}
+
+// Helper function to remove a block
+function removeBlock(body) {
+  if (!body) return;
+
+  try {
+    // Remove from physics world if still in world
+    if (world.bodies.includes(body)) {
+      World.remove(world, body);
+    }
+    
+    // Remove sprite if it exists and has a parent
+    if (body.sprite && body.sprite.parent) {
+      body.sprite.parent.removeChild(body.sprite);
+    }
+    
+    // Remove from crates array
+    const index = crates.findIndex(crate => crate && crate.body === body);
+    if (index > -1) {
+      crates.splice(index, 1);
+    }
+  } catch (error) {
+    console.error('Block removal error:', error);
+  }
 }
