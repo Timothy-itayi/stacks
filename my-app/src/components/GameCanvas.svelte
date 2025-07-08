@@ -362,71 +362,71 @@
   </div>
 
   <!-- Timer Display -->
-  <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-neutral-900/80 text-neutral-200 p-3 font-mono text-lg">
+  <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-neutral-900/80 text-amber-100 p-3 font-mono text-lg">
     <div class="flex items-center gap-2">
-      <span class="text-neutral-400">Time:</span>
-      <span class:text-red-500={timeRemaining <= 10}>
+      <span class="text-amber-500/80">Time:</span>
+      <span class:text-red-400={timeRemaining <= 10}>
         {Math.ceil(timeRemaining)}s
       </span>
     </div>
   </div>
 
   <!-- HUD top-left: minimal design -->
-  <div class="absolute top-4 left-4 bg-neutral-900/80 text-neutral-200 p-3 w-56 space-y-2 font-mono text-sm">
+  <div class="absolute top-4 left-4 bg-neutral-900/80 text-amber-100 p-3 w-56 space-y-2 font-mono text-sm">
     <div class="flex items-center justify-between">
-      <span class="text-neutral-400">Score</span>
+      <span class="text-amber-500/80">Score</span>
       <span>{score}</span>
     </div>
 
     <div class="flex items-center justify-between">
-      <span class="text-neutral-400">Wave</span>
+      <span class="text-amber-500/80">Wave</span>
       <span>{currentWave}</span>
     </div>
 
     <div class="space-y-1">
-      <div class="flex justify-between text-xs text-neutral-400">
+      <div class="flex justify-between text-xs text-amber-500/80">
         <span>Floor Space</span>
         <span>{floorCoveragePercent.toFixed(0)}%</span>
       </div>
       <div class="w-full h-1 bg-neutral-800">
         <div
           class="h-full transition-all duration-300"
-          class:bg-emerald-500={floorCoveragePercent <= 40}
-          class:bg-orange-500={floorCoveragePercent > 40 && floorCoveragePercent <= 60}
+          class:bg-lime-600={floorCoveragePercent <= 40}
+          class:bg-amber-500={floorCoveragePercent > 40 && floorCoveragePercent <= 60}
           class:bg-red-500={floorCoveragePercent > 60}
           style="width: {Math.min(floorCoveragePercent, 100)}%"
         ></div>
       </div>
     </div>
 
-    <!-- Instructions moved here -->
-    <div class="text-xs text-neutral-400 mt-2 border-t border-neutral-700 pt-2">
+    <!-- Instructions -->
+    <div class="text-xs text-amber-300/70 mt-2 border-t border-amber-900/30 pt-2">
       Click on a dirt block to detonate it. Explosive blocks clear nearby blocks.
     </div>
   </div>
 
   <!-- HUD top-right: minimal stats -->
-  <div class="absolute top-4 right-4 bg-neutral-900/80 text-neutral-200 p-3 w-56 space-y-2 font-mono text-sm">
+  <div class="absolute top-4 right-4 bg-neutral-900/80 text-amber-100 p-3 w-56 space-y-2 font-mono text-sm">
     <div class="flex items-center justify-between">
-      <span class="text-neutral-400">Elapsed</span>
+      <span class="text-amber-500/80">Elapsed</span>
       <span>{timeElapsed.toFixed(0)}s</span>
     </div>
 
     <div class="flex items-center justify-between">
-      <span class="text-neutral-400">Next Drop</span>
+      <span class="text-amber-500/80">Next Drop</span>
       <span>{nextDropIn}s</span>
     </div>
 
     <div class="flex gap-2 mt-2">
       <button
         on:click={pauseGame}
-        class="flex-1 px-2 py-1 border border-neutral-700 hover:bg-neutral-800 text-xs transition-colors"
+        class="flex-1 px-2 py-1 border border-amber-900/30 hover:bg-amber-900/20 text-xs transition-colors"
       >
         {isPaused ? 'Resume' : 'Pause'}
       </button>
       <button
         on:click={resetGame}
-        class="flex-1 px-2 py-1 border border-neutral-700 hover:bg-neutral-800 text-xs transition-colors"
+        class="flex-1 px-2 py-1 border border-amber-900/30 hover:bg-amber-900/20 text-xs transition-colors"
       >
         Reset
       </button>
@@ -436,14 +436,14 @@
   <!-- Debug Toggle Button -->
   <button
     on:click={() => showDebug = !showDebug}
-    class="absolute bottom-4 right-4 px-3 py-1 bg-neutral-900/80 border border-neutral-700 text-neutral-200 text-xs hover:bg-neutral-800"
+    class="absolute bottom-4 right-4 px-3 py-1 bg-neutral-900/80 border border-amber-900/30 text-amber-100 text-xs hover:bg-amber-900/20"
   >
     {showDebug ? 'Hide Debug' : 'Show Debug'}
   </button>
 
   <!-- Credit -->
-  <div class="absolute bottom-4 left-4 bg-neutral-900/80 text-neutral-200 p-3 w-56 font-mono text-xs opacity-60">
-    Made by <a href="https://www.timothyitayi.com" target="_blank" rel="noopener noreferrer" class="hover:text-neutral-200 transition-colors">Timothy</a>
+  <div class="absolute bottom-4 left-4 bg-neutral-900/80 text-amber-100 p-3 w-56 font-mono text-xs opacity-60">
+    Made by <a href="https://www.timothyitayi.com" target="_blank" rel="noopener noreferrer" class="text-amber-300 hover:text-amber-100 transition-colors">Timothy</a>
   </div>
 
   <!-- Enhanced Debug Panel -->
@@ -494,24 +494,28 @@
   <!-- Game Over Modal -->
   {#if isGameOver}
     <div class="absolute inset-0 bg-black/90 flex items-center justify-center font-mono" style="z-index: 50;">
-      <div class="bg-neutral-900 text-neutral-200 p-6 border border-neutral-800 max-w-md">
-        <h2 class="text-xl mb-4">Game Over</h2>
+      <div class="bg-neutral-900 text-amber-100 p-6 border border-amber-900/30 max-w-md">
+        <h2 class="text-xl mb-2 text-amber-300">Well Played!</h2>
+        <p class="text-amber-200/80 mb-4 text-sm">You kept clearing blocks until {debugState.gameOverReason === "Time's Up!" ? 'time ran out' : 'the demolition zone was full'}!</p>
         
-        <div class="space-y-2 mb-4">
-          <p class="text-red-400">{debugState.gameOverReason}</p>
-          <p class="text-lg">Final Score: {score}</p>
-          <p>Waves Survived: {currentWave}</p>
-          <p>Time Survived: {timeElapsed.toFixed(1)}s</p>
+        <div class="space-y-3 mb-4">
+          <div class="bg-amber-900/20 p-3 rounded">
+            <p class="text-lg mb-1">Final Score: <span class="text-amber-300">{score}</span></p>
+            <div class="flex gap-4 text-amber-200/80">
+              <p>Wave {currentWave}</p>
+              <p>{timeElapsed.toFixed(1)}s</p>
+            </div>
+          </div>
           
-          <!-- Debug stats in game over -->
-          <div class="mt-4 pt-4 border-t border-neutral-700 text-sm">
-            <p class="text-neutral-400 mb-2">Final Stats:</p>
-            <div class="grid grid-cols-2 gap-2 text-xs">
+          <!-- Stats box -->
+          <div class="bg-amber-900/10 p-3 rounded text-sm">
+            <p class="text-amber-300/90 mb-2">Demolition Stats</p>
+            <div class="grid grid-cols-2 gap-2 text-xs text-amber-200/70">
               <div>Total Blocks: {debugInfo.totalCrates}</div>
               <div>Settled Blocks: {debugInfo.settledCrates}</div>
-              <div>Floor Coverage: {(floorCoverage * 100).toFixed(1)}%</div>
+              <div>Zone Coverage: {(floorCoverage * 100).toFixed(1)}%</div>
               {#if debugState.lastExplosion}
-                <div>Last Action: Explosion {((Date.now() - debugState.lastExplosion.time) / 1000).toFixed(1)}s ago</div>
+                <div>Final Action: {((Date.now() - debugState.lastExplosion.time) / 1000).toFixed(1)}s ago</div>
               {/if}
             </div>
           </div>
@@ -520,15 +524,15 @@
         <div class="flex gap-2">
           <button
             on:click={resetGame}
-            class="flex-1 px-4 py-2 border border-neutral-700 hover:bg-neutral-800 text-sm transition-colors"
+            class="flex-1 px-4 py-2 border border-amber-900/30 hover:bg-amber-900/20 text-sm transition-colors"
           >
-            Try Again
+            Clear Again
           </button>
           <button
             on:click={() => showDebug = !showDebug}
-            class="px-4 py-2 border border-neutral-700 hover:bg-neutral-800 text-sm transition-colors"
+            class="px-4 py-2 border border-amber-900/30 hover:bg-amber-900/20 text-sm transition-colors"
           >
-            {showDebug ? 'Hide Debug' : 'Show Debug'}
+            {showDebug ? 'Hide Stats' : 'Show Stats'}
           </button>
         </div>
       </div>
@@ -538,11 +542,11 @@
   <!-- Pause overlay -->
   {#if isPaused}
     <div class="absolute inset-0 bg-black/90 flex items-center justify-center font-mono">
-      <div class="bg-neutral-900 text-neutral-200 p-6 border border-neutral-800">
+      <div class="bg-neutral-900 text-amber-100 p-6 border border-amber-900/30">
         <h2 class="text-xl mb-4">Paused</h2>
         <button
           on:click={pauseGame}
-          class="w-full px-4 py-2 border border-neutral-700 hover:bg-neutral-800 text-sm transition-colors"
+          class="w-full px-4 py-2 border border-amber-900/30 hover:bg-amber-900/20 text-sm transition-colors"
         >
           Resume
         </button>
