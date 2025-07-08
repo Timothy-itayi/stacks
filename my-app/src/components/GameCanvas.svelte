@@ -4,21 +4,25 @@
   import * as physics from '../lib/physics.js';
   import { GameLoop } from '../lib/gameloop.js';
 
-  // @ts-ignore
-  // @ts-ignore
-  // @ts-ignore
-  // @ts-ignore
+  interface ExplosionEvent {
+    x: number;
+    y: number;
+    time: number;
+  }
+
+  interface DebugState {
+    lastScoreUpdate: number;
+    lastGameState: string;
+    lastExplosion: ExplosionEvent | null;
+    blockRemovals: Array<{ id: string; time: number }>;
+    gameOverReason: string;
+    physicsActive: boolean;
+  }
+
   let container: HTMLDivElement;
   let currentHeight = 0;
   let settledHeight = 0; // New: track only settled crates
-  // @ts-ignore
-  // @ts-ignore
-  // @ts-ignore
-  // @ts-ignore
   let gameLoop: GameLoop;
-  // @ts-ignore
-  // @ts-ignore
-  // @ts-ignore
   let app: Application;
   
   // Game state
@@ -29,10 +33,6 @@
   let floorCoverage = 0;
   let nextDropIn = 0;
   let detonationCooldown = 0;
-  // @ts-ignore
-  // @ts-ignore
-  // @ts-ignore
-  // @ts-ignore
   let chainMultiplier = 1;
   
   // Debug info
@@ -42,12 +42,29 @@
     fallingCrates: 0
   };
   
+  // Enhanced debug state
+  let debugState: DebugState = {
+    lastScoreUpdate: 0,
+    lastGameState: '',
+    lastExplosion: null,
+    blockRemovals: [],
+    gameOverReason: '',
+    physicsActive: true
+  };
+  
+  // Debug floor sections
+  interface FloorSection {
+    hasSettledBlock: boolean;
+  }
+  let floorSections: FloorSection[] = [];
+  let showDebug = false; // Toggle for debug visualization
+  
   // Game config
   const GAME_CONFIG = {
     gameWidth: 640,
     gameHeight: 780,
     wallThickness: 30,
-    groundHeight: 30,
+    groundHeight: 60,
     maxFloorCoverage: 0.7 // 70% floor coverage is game over
   };
 
@@ -66,27 +83,71 @@
     await physics.loadAssets();
     await physics.initPhysics(app);
 
-    // Ground visual - thinner
+    // Ground visual - enhanced with pattern
     const ground = new Graphics();
-    ground.beginFill(0x222222); // Subtle dark gray
+    
+    // Main floor fill
+    ground.beginFill(0x2c3e50); // Slightly lighter than background
     ground.drawRect(0, GAME_HEIGHT - GROUND_HEIGHT, GAME_WIDTH, GROUND_HEIGHT);
     ground.endFill();
-    ground.lineStyle(1, 0x333333); // Subtle line
+    
+    // Add subtle grid pattern
+    ground.lineStyle(1, 0x333333, 0.3);
+    const gridSize = 20;
+    for (let x = 0; x < GAME_WIDTH; x += gridSize) {
+      ground.moveTo(x, GAME_HEIGHT - GROUND_HEIGHT);
+      ground.lineTo(x, GAME_HEIGHT);
+    }
+    
+    // Top edge highlight
+    ground.lineStyle(2, 0x444444, 1);
     ground.moveTo(0, GAME_HEIGHT - GROUND_HEIGHT);
     ground.lineTo(GAME_WIDTH, GAME_HEIGHT - GROUND_HEIGHT);
+    
+    // Bottom edge shadow
+    ground.lineStyle(2, 0x000000, 0.5);
+    ground.moveTo(0, GAME_HEIGHT);
+    ground.lineTo(GAME_WIDTH, GAME_HEIGHT);
+    
     app.stage.addChild(ground);
 
-    // Side wall visuals - thinner
+    // Side wall visuals - enhanced
     const leftWall = new Graphics();
-    leftWall.beginFill(0x222222);
+    leftWall.beginFill(0x1a1a1a); // Match floor color
     leftWall.drawRect(0, 0, WALL_THICKNESS, GAME_HEIGHT);
     leftWall.endFill();
+    
+    // Wall patterns
+    leftWall.lineStyle(1, 0x333333, 0.3);
+    for (let y = 0; y < GAME_HEIGHT; y += gridSize) {
+      leftWall.moveTo(0, y);
+      leftWall.lineTo(WALL_THICKNESS, y);
+    }
+    
+    // Right edge highlight
+    leftWall.lineStyle(2, 0x444444, 0.5);
+    leftWall.moveTo(WALL_THICKNESS, 0);
+    leftWall.lineTo(WALL_THICKNESS, GAME_HEIGHT);
+    
     app.stage.addChild(leftWall);
 
     const rightWall = new Graphics();
-    rightWall.beginFill(0x222222);
+    rightWall.beginFill(0x1a1a1a); // Match floor color
     rightWall.drawRect(GAME_WIDTH - WALL_THICKNESS, 0, WALL_THICKNESS, GAME_HEIGHT);
     rightWall.endFill();
+    
+    // Wall patterns
+    rightWall.lineStyle(1, 0x333333, 0.3);
+    for (let y = 0; y < GAME_HEIGHT; y += gridSize) {
+      rightWall.moveTo(GAME_WIDTH - WALL_THICKNESS, y);
+      rightWall.lineTo(GAME_WIDTH, y);
+    }
+    
+    // Left edge shadow
+    rightWall.lineStyle(2, 0x000000, 0.5);
+    rightWall.moveTo(GAME_WIDTH - WALL_THICKNESS, 0);
+    rightWall.lineTo(GAME_WIDTH - WALL_THICKNESS, GAME_HEIGHT);
+    
     app.stage.addChild(rightWall);
 
     // Progress line - more subtle
@@ -97,30 +158,29 @@
     gameLoop = new GameLoop(physics, GAME_CONFIG);
     
     // Set up event listeners
-    // @ts-ignore
-    // @ts-ignore
-    // @ts-ignore
     gameLoop.onGameStateChange = (newState: string) => {
+      debugState.lastGameState = gameState;
       gameState = newState;
+      if (newState === 'gameOver') {
+        const coverage = physics.getFloorCoverage();
+        debugState.gameOverReason = `Floor Coverage: ${(coverage * 100).toFixed(1)}%`;
+        debugState.physicsActive = false;
+        // Stop physics engine immediately
+        physics.stopPhysics();
+      }
+      debugState = debugState; // Trigger Svelte reactivity
     };
     
-    // @ts-ignore
-    // @ts-ignore
-    // @ts-ignore
     gameLoop.onWaveChange = (wave: number) => {
       currentWave = wave;
     };
     
-    // @ts-ignore
-    // @ts-ignore
-    // @ts-ignore
     gameLoop.onScoreChange = (newScore: number) => {
+      debugState.lastScoreUpdate = Date.now();
       score = newScore;
+      debugState = debugState; // Trigger Svelte reactivity
     };
 
-    // @ts-ignore
-    // @ts-ignore
-    // @ts-ignore
     gameLoop.onCooldownChange = (cooldown: number) => {
       detonationCooldown = cooldown;
     };
@@ -128,33 +188,41 @@
     // Create initial crates for demo
     for (let i = 0; i < 3; i++) {
       const x = WALL_THICKNESS + Math.random() * (GAME_WIDTH - WALL_THICKNESS * 2);
-      physics.createCrate(x, 50 + i * 60, 'explosive');
+      // Random selection between available non-explosive blocks
+      const normalBlocks = ['dirt', 'stone', 'dirt_top'];
+      const blockType = normalBlocks[Math.floor(Math.random() * normalBlocks.length)];
+      physics.createCrate(x, 50 + i * 60, blockType);
     }
     
     // Start the game loop
     gameLoop.start();
 
     app.ticker.add((delta) => {
-      physics.update();
-      gameLoop.update(delta);
+      // Only update physics if game is not over
+      if (gameState === 'playing') {
+        physics.update();
+        gameLoop.update(delta);
+      }
       
       // Update UI state
       const state = gameLoop.getGameState();
       
       // Get physics debug info
-      // @ts-ignore
       debugInfo = physics.getPhysicsDebugInfo();
       
+      // Update floor section debug info
+      if (showDebug) {
+        floorSections = physics.getFloorSectionStates();
+      }
+      
       timeElapsed = state.timeElapsed;
-      floorCoverage = physics.getFloorCoverage();
-      nextDropIn = Math.ceil(state.nextDropIn / 1000);
+      const coverage = physics.getFloorCoverage();
+      floorCoverage = coverage;
       detonationCooldown = state.detonationCooldown;
       
       // Check game over condition
-      // @ts-ignore
       if (physics.isGameOverCondition() && gameState === 'playing') {
         gameState = 'gameOver';
-        // @ts-ignore
         gameLoop.onGameStateChange('gameOver');
       }
     });
@@ -168,11 +236,29 @@
 
   // Game actions
   function resetGame() {
+    // First stop physics and clear everything
+    physics.stopPhysics();
     physics.resetPhysics();
+    
+    // Reset game loop
     gameLoop.reset();
+    
+    // Reset local state
     currentHeight = 0;
     settledHeight = 0;
     gameState = 'playing';
+    debugState.physicsActive = true;
+    
+    // Create initial blocks with delay to ensure physics is ready
+    setTimeout(() => {
+      if (gameState === 'playing') {
+        // Start physics engine
+        physics.startPhysics();
+        
+        // Start game loop
+        gameLoop.start();
+      }
+    }, 100);
   }
 
   function pauseGame() {
@@ -202,6 +288,32 @@
   $: floorCoveragePercent = floorCoverage * 100;
   $: isGameOver = gameState === 'gameOver';
   $: isPaused = gameState === 'paused';
+
+  function toggleDebug() {
+    showDebug = !showDebug;
+  }
+
+  function handleExplosion(x: number, y: number) {
+    debugState.lastExplosion = {
+      x,
+      y,
+      time: Date.now()
+    };
+    debugState = debugState; // Trigger Svelte reactivity
+  }
+
+  // Track block removals
+  function trackBlockRemoval(id: string) {
+    debugState.blockRemovals.push({
+      id,
+      time: Date.now()
+    });
+    // Keep only last 10 removals
+    if (debugState.blockRemovals.length > 10) {
+      debugState.blockRemovals.shift();
+    }
+    debugState = debugState; // Trigger Svelte reactivity
+  }
 </script>
 
 <!-- Layout - Minimalistic version -->
@@ -211,7 +323,28 @@
     bind:this={container}
     class="w-[640px] h-[780px] border border-neutral-800 overflow-hidden relative"
     on:click={handleCanvasClick}
-  ></div>
+  >
+    <!-- Debug floor sections -->
+    {#if showDebug}
+      <div class="absolute bottom-0 left-0 right-0 flex" style="height: 100px;">
+        {#each floorSections as section, i}
+          <div 
+            class="h-full border-r border-neutral-700 transition-colors duration-200"
+            style="width: {100/15}%; background-color: {
+              section.hasSettledBlock ? 'rgba(255, 0, 0, 0.3)' : 
+              'rgba(0, 255, 0, 0.1)'
+            }"
+          >
+            <div class="text-xs text-white opacity-50 text-center">
+              {i + 1}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
+
+
 
   <!-- HUD top-left: minimal design -->
   <div class="absolute top-4 left-4 bg-neutral-900/80 text-neutral-200 p-3 w-56 space-y-2 font-mono text-sm">
@@ -296,20 +429,91 @@
     </div>
   </div>
 
+  <!-- Enhanced Debug Panel -->
+  {#if showDebug}
+    <div class="absolute top-4 right-4 bg-neutral-900/90 text-neutral-200 p-4 font-mono text-xs space-y-2 border border-neutral-700 max-w-xs" style="z-index: 100;">
+      <div class="flex justify-between items-center">
+        <span>Debug Mode</span>
+        <button
+          on:click={() => showDebug = false}
+          class="px-2 py-1 bg-neutral-800 hover:bg-neutral-700"
+        >
+          Close
+        </button>
+      </div>
+      
+      <div class="space-y-1">
+        <div>Game State: {gameState}</div>
+        <div>Previous State: {debugState.lastGameState}</div>
+        <div class:text-red-400={!debugState.physicsActive}>Physics Active: {debugState.physicsActive ? 'Yes' : 'No'}</div>
+        <div>Total Crates: {debugInfo.totalCrates}</div>
+        <div>Settled: {debugInfo.settledCrates}</div>
+        <div>Falling: {debugInfo.fallingCrates}</div>
+        <div>Floor Coverage: {(floorCoverage * 100).toFixed(1)}%</div>
+        
+        {#if debugState.lastScoreUpdate}
+          <div>Last Score Update: {((Date.now() - debugState.lastScoreUpdate) / 1000).toFixed(1)}s ago</div>
+        {/if}
+        
+        {#if debugState.lastExplosion}
+          <div>Last Explosion: {((Date.now() - debugState.lastExplosion.time) / 1000).toFixed(1)}s ago</div>
+          <div>At: ({debugState.lastExplosion.x}, {debugState.lastExplosion.y})</div>
+        {/if}
+
+        {#if debugState.blockRemovals.length > 0}
+          <div class="mt-2 pt-2 border-t border-neutral-700">
+            <div class="mb-1">Recent Block Removals:</div>
+            {#each debugState.blockRemovals.slice(-3) as removal}
+              <div class="text-xs opacity-75">
+                {((Date.now() - removal.time) / 1000).toFixed(1)}s ago
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <!-- Game Over Modal -->
   {#if isGameOver}
-    <div class="absolute inset-0 bg-black/90 flex items-center justify-center font-mono">
-      <div class="bg-neutral-900 text-neutral-200 p-6 border border-neutral-800">
+    <div class="absolute inset-0 bg-black/90 flex items-center justify-center font-mono" style="z-index: 50;">
+      <div class="bg-neutral-900 text-neutral-200 p-6 border border-neutral-800 max-w-md">
         <h2 class="text-xl mb-4">Game Over</h2>
-        <p class="text-sm mb-2 text-neutral-400">Floor too crowded</p>
-        <p class="text-sm mb-4">Final Score: {score}</p>
-        <p class="text-sm mb-4">Waves Survived: {currentWave}</p>
-        <button
-          on:click={resetGame}
-          class="w-full px-4 py-2 border border-neutral-700 hover:bg-neutral-800 text-sm transition-colors"
-        >
-          Retry
-        </button>
+        
+        <div class="space-y-2 mb-4">
+          <p class="text-red-400">{debugState.gameOverReason}</p>
+          <p class="text-lg">Final Score: {score}</p>
+          <p>Waves Survived: {currentWave}</p>
+          
+          <!-- Debug stats in game over -->
+          <div class="mt-4 pt-4 border-t border-neutral-700 text-sm">
+            <p class="text-neutral-400 mb-2">Final Stats:</p>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div>Total Blocks: {debugInfo.totalCrates}</div>
+              <div>Settled Blocks: {debugInfo.settledCrates}</div>
+              <div>Floor Coverage: {(floorCoverage * 100).toFixed(1)}%</div>
+              <div>Time Survived: {timeElapsed.toFixed(1)}s</div>
+              {#if debugState.lastExplosion}
+                <div>Last Action: Explosion {((Date.now() - debugState.lastExplosion.time) / 1000).toFixed(1)}s ago</div>
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        <div class="flex gap-2">
+          <button
+            on:click={resetGame}
+            class="flex-1 px-4 py-2 border border-neutral-700 hover:bg-neutral-800 text-sm transition-colors"
+          >
+            Retry
+          </button>
+          <button
+            on:click={() => showDebug = !showDebug}
+            class="px-4 py-2 border border-neutral-700 hover:bg-neutral-800 text-sm transition-colors"
+          >
+            {showDebug ? 'Hide Debug' : 'Show Debug'}
+          </button>
+        </div>
       </div>
     </div>
   {/if}
@@ -328,4 +532,12 @@
       </div>
     </div>
   {/if}
+
+  <!-- Debug Toggle Button -->
+  <button
+    on:click={() => showDebug = !showDebug}
+    class="absolute bottom-4 right-4 px-3 py-1 bg-neutral-900/80 border border-neutral-700 text-neutral-200 text-xs hover:bg-neutral-800"
+  >
+    {showDebug ? 'Hide Debug' : 'Show Debug'}
+  </button>
 </div>

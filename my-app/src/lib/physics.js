@@ -21,14 +21,15 @@ const BLOCK_ALIASES = ['dirt', 'explosive', 'stone', 'dirt_top'];
 
 /** @type {Array<Particle>} */
 let particles = [];
-const PARTICLE_COUNT = 25;
-const EXPLOSION_FORCE = 0.004;
-const EXPLOSION_RADIUS = 150;
+const PARTICLE_COUNT = 20;
+const EXPLOSION_FORCE = 0.003;
+const EXPLOSION_RADIUS = 120;
 
 // Chain reaction tracking
 let chainReactionCount = 0;
 let lastExplosionTime = 0;
-const CHAIN_REACTION_WINDOW = 800;
+let lastChainSize = 0;
+const CHAIN_REACTION_WINDOW = 600;
 const MAX_PARTICLES = 200; // Limit total particles
 const MAX_CRATES = 100; // Limit total crates
 
@@ -40,29 +41,29 @@ const BLOCK_PROPERTIES = {
   dirt: {
     density: 0.001,
     restitution: 0.1,
-    friction: 0.5,
-    frictionAir: 0.02,
+    friction: 0.6,
+    frictionAir: 0.015,
     color: 0x96CEB4
   },
   explosive: {
-    density: 0.001,
-    restitution: 0.1,
-    friction: 0.5,
+    density: 0.0012,
+    restitution: 0.08,
+    friction: 0.7,
     frictionAir: 0.02,
     color: 0xFF4500
   },
   stone: {
-    density: 0.002, // Heavier
-    restitution: 0.05, // Less bouncy
-    friction: 0.8, // More friction
+    density: 0.002,
+    restitution: 0.05,
+    friction: 0.8,
     frictionAir: 0.01,
     color: 0x8B4513
   },
   dirt_top: {
-    density: 0.001,
+    density: 0.0011,
     restitution: 0.1,
-    friction: 0.5,
-    frictionAir: 0.02,
+    friction: 0.65,
+    frictionAir: 0.015,
     color: 0x8B4513
   }
 };
@@ -97,12 +98,27 @@ class Particle extends Graphics {
   }
 }
 
+// Add to the top with other constants
+const FLOOR_SECTIONS = 30;
+const BLOCK_WIDTH = 40;
+
+// Track initial impact points of blocks that fell naturally
+let floorImpacts = new Map(); // Maps block ID to impact position
+let draggedBlocks = new Set(); // Track blocks that were dragged
+
+// Track which blocks are touching the ground
+let groundContacts = new Set();
+
+// Add physics engine state tracking
+let isPhysicsRunning = true;
+
 // @ts-ignore
 export async function initPhysics(pixiApp) {
   app = pixiApp;
   engine = Engine.create();
   world = engine.world;
   runner = Runner.create();
+  isPhysicsRunning = true;
 
   engine.gravity.y = 1;
 
@@ -136,19 +152,65 @@ export async function initPhysics(pixiApp) {
     mouse,
     constraint: { stiffness: 0.2, render: { visible: false } }
   });
+
+  // Track when blocks start being dragged
+  Events.on(mouseConstraint, 'startdrag', (event) => {
+    const body = event.body;
+    if (body && body.blockType) {
+      draggedBlocks.add(body.id);
+      // Remove any existing impact data if block was dragged
+      floorImpacts.delete(body.id);
+    }
+  });
+
   World.add(world, mouseConstraint);
 
-  // Remove the old collision handler and add new one for basic collisions
+  // Collision detection for initial impacts
   Events.on(engine, 'collisionStart', (event) => {
     event.pairs.forEach((pair) => {
       const { bodyA, bodyB } = pair;
-      // Add any necessary collision handling here
-      // But don't trigger explosions automatically
+      
+      // Only record impacts for blocks that weren't dragged
+      if (bodyA.label === 'ground' && bodyB.blockType && !draggedBlocks.has(bodyB.id) && !floorImpacts.has(bodyB.id)) {
+        floorImpacts.set(bodyB.id, bodyB.position.x);
+      } else if (bodyB.label === 'ground' && bodyA.blockType && !draggedBlocks.has(bodyA.id) && !floorImpacts.has(bodyA.id)) {
+        floorImpacts.set(bodyA.id, bodyA.position.x);
+      }
+    });
+  });
+
+  // Collision detection
+  Events.on(engine, 'collisionStart', (event) => {
+    event.pairs.forEach((pair) => {
+      const { bodyA, bodyB } = pair;
+      
+      // Check if one body is the ground and the other is a block
+      if (bodyA.label === 'ground' && bodyB.blockType) {
+        groundContacts.add(bodyB.id);
+      } else if (bodyB.label === 'ground' && bodyA.blockType) {
+        groundContacts.add(bodyA.id);
+      }
+    });
+  });
+
+  // Remove from ground contacts when collision ends
+  Events.on(engine, 'collisionEnd', (event) => {
+    event.pairs.forEach((pair) => {
+      const { bodyA, bodyB } = pair;
+      
+      if (bodyA.label === 'ground' && bodyB.blockType) {
+        groundContacts.delete(bodyB.id);
+      } else if (bodyB.label === 'ground' && bodyA.blockType) {
+        groundContacts.delete(bodyA.id);
+      }
     });
   });
 
   Runner.run(runner, engine);
   crates = [];
+  groundContacts = new Set();
+  floorImpacts = new Map();
+  draggedBlocks = new Set();
 
   return { engine, world, runner, mouseConstraint };
 }
@@ -284,7 +346,28 @@ export function createCrate(x, y, alias = 'dirt') {
   return crateObj;
 }
 
+export function stopPhysics() {
+  isPhysicsRunning = false;
+  if (runner) {
+    Runner.stop(runner);
+  }
+}
+
+export function startPhysics() {
+  isPhysicsRunning = true;
+  if (engine && runner) {
+    // Ensure runner is stopped before starting
+    Runner.stop(runner);
+    // Create new runner to ensure clean state
+    runner = Runner.create();
+    Runner.run(runner, engine);
+  }
+}
+
 export function update() {
+  // Don't update if physics is stopped
+  if (!isPhysicsRunning) return;
+
   try {
     // Clean up invalid crates
     crates = crates.filter(crate => {
@@ -333,51 +416,117 @@ export function update() {
 export function getCurrentStackHeight() {
   if (crates.length === 0) return 0;
 
-  // @ts-ignore
-  const minY = Math.min(...crates.map(c => c.body.position.y));
-  // @ts-ignore
-  const canvasBottom = app.renderer.height;
-  const heightInPixels = canvasBottom - minY;
-  const meters = heightInPixels / 80;
-  return meters;
+  // Only measure settled blocks
+  let highestSettledY = app.renderer.height;
+  
+  for (const crate of crates) {
+    const velocity = Math.abs(crate.body.velocity.x) + Math.abs(crate.body.velocity.y);
+    if (velocity < 0.5) { // Same threshold as getStackStatus
+      if (crate.body.position.y < highestSettledY) {
+        highestSettledY = crate.body.position.y;
+      }
+    }
+  }
+
+  return app.renderer.height - highestSettledY;
 }
 
-export function getFloorCoverage() {
-  // @ts-ignore
-  if (!world || crates.length === 0) return 0;
+export function getStackStatus() {
+  if (crates.length === 0) return { height: 0, dangerZone: false, settled: true };
   
   const GROUND_HEIGHT = 60;
-  // @ts-ignore
-  const GAME_WIDTH = app.renderer.width;
-  // @ts-ignore
   const GAME_HEIGHT = app.renderer.height;
-  const WALL_THICKNESS = 60;
-  const FLOOR_Y = GAME_HEIGHT - GROUND_HEIGHT;
+  const DANGER_ZONE_HEIGHT = GAME_HEIGHT * 0.2; // Top 20% of screen is danger zone
   
-  // Check how much of the floor is covered by boxes
-  const floorSections = 20; // divide floor into sections
-  const sectionWidth = (GAME_WIDTH - (WALL_THICKNESS * 2)) / floorSections;
-  let coveredSections = 0;
+  // Track settled blocks only
+  let highestSettledY = GAME_HEIGHT;
+  let hasMovingBlocks = false;
   
-  for (let i = 0; i < floorSections; i++) {
-    const sectionX = WALL_THICKNESS + (i * sectionWidth);
-    // @ts-ignore
-    // @ts-ignore
-    const sectionCenter = sectionX + sectionWidth / 2;
+  for (const crate of crates) {
+    const velocity = Math.abs(crate.body.velocity.x) + Math.abs(crate.body.velocity.y);
+    const isSettled = velocity < 0.5; // Lower threshold for "settled"
     
-    // Check if any crate is near the floor in this section
-    // @ts-ignore
-    for (const crate of crates) {
-      if (crate.body.position.y > FLOOR_Y - 100 && 
-          crate.body.position.x > sectionX && 
-          crate.body.position.x < sectionX + sectionWidth) {
-        coveredSections++;
-        break;
+    // Only consider settled blocks for height measurement
+    if (isSettled) {
+      if (crate.body.position.y < highestSettledY) {
+        highestSettledY = crate.body.position.y;
+      }
+    } else {
+      hasMovingBlocks = true;
+    }
+  }
+  
+  const heightFromBottom = GAME_HEIGHT - highestSettledY;
+  const inDangerZone = highestSettledY < DANGER_ZONE_HEIGHT;
+  
+  return {
+    height: heightFromBottom,
+    dangerZone: inDangerZone,
+    settled: !hasMovingBlocks
+  };
+}
+
+export function getFloorSectionStates() {
+  if (!world || crates.length === 0) {
+    return Array(FLOOR_SECTIONS).fill({ hasSettledBlock: false });
+  }
+  
+  const GAME_WIDTH = app.renderer.width;
+  const WALL_THICKNESS = 60;
+  const sectionWidth = (GAME_WIDTH - (WALL_THICKNESS * 2)) / FLOOR_SECTIONS;
+  const sections = Array(FLOOR_SECTIONS).fill().map(() => ({ hasSettledBlock: false }));
+  
+  // Only use impact positions for blocks that fell naturally
+  for (const crate of crates) {
+    const impactX = floorImpacts.get(crate.body.id);
+    if (impactX !== undefined && !draggedBlocks.has(crate.body.id)) {
+      // Calculate which sections this block covers based on impact position
+      const blockLeft = impactX - BLOCK_WIDTH/2;
+      const blockRight = impactX + BLOCK_WIDTH/2;
+      
+      // Find all sections this block touches
+      const startSection = Math.floor((blockLeft - WALL_THICKNESS) / sectionWidth);
+      const endSection = Math.ceil((blockRight - WALL_THICKNESS) / sectionWidth);
+      
+      // Mark all covered sections
+      for (let i = Math.max(0, startSection); i < Math.min(FLOOR_SECTIONS, endSection); i++) {
+        sections[i].hasSettledBlock = true;
       }
     }
   }
   
-  return coveredSections / floorSections;
+  return sections;
+}
+
+export function getFloorCoverage() {
+  if (!world || crates.length === 0) return 0;
+  
+  const GAME_WIDTH = app.renderer.width;
+  const WALL_THICKNESS = 60;
+  const sectionWidth = (GAME_WIDTH - (WALL_THICKNESS * 2)) / FLOOR_SECTIONS;
+  const sections = new Array(FLOOR_SECTIONS).fill(false);
+  
+  // Only use impact positions for blocks that fell naturally
+  for (const crate of crates) {
+    const impactX = floorImpacts.get(crate.body.id);
+    if (impactX !== undefined && !draggedBlocks.has(crate.body.id)) {
+      // Calculate which sections this block covers based on impact position
+      const blockLeft = impactX - BLOCK_WIDTH/2;
+      const blockRight = impactX + BLOCK_WIDTH/2;
+      
+      // Find all sections this block touches
+      const startSection = Math.floor((blockLeft - WALL_THICKNESS) / sectionWidth);
+      const endSection = Math.ceil((blockRight - WALL_THICKNESS) / sectionWidth);
+      
+      // Mark all covered sections
+      for (let i = Math.max(0, startSection); i < Math.min(FLOOR_SECTIONS, endSection); i++) {
+        sections[i] = true;
+      }
+    }
+  }
+  
+  const coveredSections = sections.filter(Boolean).length;
+  return coveredSections / FLOOR_SECTIONS;
 }
 
 export function clearBottomRow() {
@@ -434,6 +583,9 @@ export function clearAllBodies() {
     // Clear arrays
     crates = [];
     particles = [];
+    groundContacts = new Set();
+    floorImpacts = new Map();
+    draggedBlocks = new Set();
     
     // Reset state
     selectedExplosiveBlock = null;
@@ -512,8 +664,85 @@ export function isGameOverCondition() {
 }
 
 export function resetPhysics() {
-  clearAllBodies();
-  // Reset any other physics state if needed
+  try {
+    // Stop physics first
+    stopPhysics();
+    
+    // Make a copy of the array to avoid modification during iteration
+    const cratesToRemove = [...crates];
+    
+    cratesToRemove.forEach(crate => {
+      if (crate && crate.body) {
+        removeBlock(crate.body);
+      }
+    });
+    
+    // Clear arrays
+    crates = [];
+    particles = [];
+    floorImpacts = new Map();
+    draggedBlocks = new Set();
+    groundContacts = new Set();
+    
+    // Reset state
+    selectedExplosiveBlock = null;
+    chainReactionCount = 0;
+    lastExplosionTime = 0;
+
+    // Reset engine and runner
+    if (engine) {
+      World.clear(world);
+      Engine.clear(engine);
+      
+      // Re-add ground and walls since they were cleared
+      const width = app.renderer.width;
+      const height = app.renderer.height;
+      const wallThickness = 60;
+
+      // Ground
+      const ground = Bodies.rectangle(width / 2, height - 30, width, 60, {
+        isStatic: true,
+        restitution: 0.3,
+        label: 'ground'
+      });
+      World.add(world, ground);
+
+      // Walls
+      const leftWall = Bodies.rectangle(wallThickness / 2, height / 2, wallThickness, height, {
+        isStatic: true,
+        label: 'wall'
+      });
+      const rightWall = Bodies.rectangle(width - wallThickness / 2, height / 2, wallThickness, height, {
+        isStatic: true,
+        label: 'wall'
+      });
+      World.add(world, [leftWall, rightWall]);
+      
+      // Reset engine timing
+      engine.timing.timestamp = 0;
+      engine.timing.lastDelta = 0;
+      engine.timing.lastElapsed = 0;
+      
+      // Reset gravity
+      engine.gravity.x = 0;
+      engine.gravity.y = 1;
+    }
+
+    // Create new runner if needed
+    if (!runner || !runner.enabled) {
+      if (runner) {
+        Runner.stop(runner);
+      }
+      runner = Runner.create();
+    }
+
+  } catch (error) {
+    console.error('Reset physics error:', error);
+  }
+}
+
+export function getLastChainReactionSize() {
+  return lastChainSize;
 }
 
 /**
@@ -530,6 +759,9 @@ export function triggerExplosion(x, y) {
       chainReactionCount = 1;
     }
     lastExplosionTime = currentTime;
+    
+    // Store the chain size for scoring
+    lastChainSize = chainReactionCount;
     
     // Calculate multiplier based on chain reaction
     const multiplier = Math.min(chainReactionCount, 3);
@@ -668,6 +900,10 @@ function removeBlock(body) {
     if (index > -1) {
       crates.splice(index, 1);
     }
+
+    // Remove tracking data
+    floorImpacts.delete(body.id);
+    draggedBlocks.delete(body.id);
   } catch (error) {
     console.error('Block removal error:', error);
   }

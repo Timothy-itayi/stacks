@@ -8,11 +8,12 @@ export class GameLoop {
     this.blocksDropped = 0;
     this.score = 0;
     this.timeElapsed = 0;
+    this.finalScore = 0; // Store final score separately
     
     // Game mechanics
     this.dropInterval = 3000; // milliseconds between drops
     this.blocksPerWave = 5;
-    this.maxFloorCoverage = 0.8; // 80% floor coverage triggers game over
+    this.maxFloorCoverage = 0.85; // 85% settled floor coverage triggers game over
     this.baseDropSpeed = 1500; // gets faster over time
     
     // Detonation mechanics
@@ -22,6 +23,12 @@ export class GameLoop {
     
     // Block dropping pattern
     this.explosiveBlockInterval = 6; // Drop explosive block every 6th block
+    
+    // Scoring system
+    this.baseDestroyScore = 10; // Base points for destroying a block
+    this.chainMultiplier = 1.5; // Multiplier for chain reactions
+    this.maxChainMultiplier = 5; // Cap the chain multiplier
+    this.waveBonus = 25; // Points for completing a wave
     
     // Timers
     this.lastDropTime = 0;
@@ -41,15 +48,25 @@ export class GameLoop {
   }
 
   start() {
+    if (this.gameState !== 'playing') return;
+    
+    const now = Date.now();
+    this.gameStartTime = now;
+    this.lastDropTime = now;
+    this.score = 0;
+    this.finalScore = 0;
+    
+    // Ensure we're in playing state
     this.gameState = 'playing';
-    this.gameStartTime = Date.now();
-    this.lastDropTime = this.gameStartTime;
     this.notifyGameStateChange();
+    this.notifyScoreChange();
   }
 
   pause() {
-    this.gameState = 'paused';
-    this.notifyGameStateChange();
+    if (this.gameState === 'playing') {
+      this.gameState = 'paused';
+      this.notifyGameStateChange();
+    }
   }
 
   resume() {
@@ -60,26 +77,46 @@ export class GameLoop {
   }
 
   reset() {
+    // Stop any ongoing game logic
     this.gameState = 'playing';
     this.currentWave = 1;
     this.blocksDropped = 0;
     this.score = 0;
+    this.finalScore = 0;
     this.timeElapsed = 0;
-    this.gameStartTime = Date.now();
-    this.lastDropTime = this.gameStartTime;
+    
+    // Reset timers
+    const now = Date.now();
+    this.gameStartTime = now;
+    this.lastDropTime = now;
     this.dropInterval = this.baseDropSpeed;
     
-    // Clear all physics bodies
-    this.physics.clearAllBodies();
+    // Reset detonation state
+    this.canDetonate = true;
+    this.lastDetonationTime = 0;
     
+    // Reset all notifications
     this.notifyGameStateChange();
     this.notifyWaveChange();
     this.notifyScoreChange();
+    if (this.onCooldownChange) {
+      this.onCooldownChange(0);
+    }
+  }
+
+  endGame() {
+    if (this.gameState === 'playing') {
+      this.finalScore = this.score; // Store the final score
+      this.gameState = 'gameOver';
+      this.notifyGameStateChange();
+      // Freeze the physics state
+      this.physics.clearAllBodies();
+    }
   }
 
   // @ts-ignore
-  // @ts-ignore
   update(deltaTime) {
+    // Don't update anything if game is not in playing state
     if (this.gameState !== 'playing') return;
 
     const currentTime = Date.now();
@@ -100,20 +137,18 @@ export class GameLoop {
 
     // Check win condition
     if (this.physics.getCurrentStackHeight() >= this.config.targetHeight) {
-      this.gameState = 'won';
-      this.notifyGameStateChange();
+      this.endGame();
       return;
     }
 
     // Check game over condition - floor coverage
     const floorCoverage = this.physics.getFloorCoverage();
     if (floorCoverage >= this.maxFloorCoverage) {
-      this.gameState = 'gameOver';
-      this.notifyGameStateChange();
+      this.endGame();
       return;
     }
 
-    // Handle block dropping
+    // Handle block dropping only if game is still active
     if (currentTime - this.lastDropTime >= this.dropInterval) {
       this.dropBlock();
       this.lastDropTime = currentTime;
@@ -124,11 +159,18 @@ export class GameLoop {
   }
 
   dropBlock() {
-    // Random X position within walls
-    const minX = this.config.wallThickness + 40;
-    const maxX = this.config.gameWidth - this.config.wallThickness - 40;
+    // Don't drop blocks if game is not in playing state
+    if (this.gameState !== 'playing') return;
+    
+    // Random X position within walls, with wider range
+    const minX = this.config.wallThickness;
+    const maxX = this.config.gameWidth - this.config.wallThickness;
     const x = Math.random() * (maxX - minX) + minX;
-    const y = -80; // spawn above canvas
+    
+    // Random Y position well above the canvas
+    const minY = -200;
+    const maxY = -400;
+    const y = Math.random() * (maxY - minY) + minY;
     
     // Determine block type based on count and pattern
     let blockType;
@@ -142,16 +184,13 @@ export class GameLoop {
     
     this.physics.createCrate(x, y, blockType);
     this.blocksDropped++;
-    
-    // Award points for surviving drops
-    this.score += 5;
-    this.notifyScoreChange();
 
-    // Check for wave progression
-    if (this.blocksDropped % this.blocksPerWave === 0) {
+    // Check for wave progression only if game is still active
+    if (this.gameState === 'playing' && this.blocksDropped % this.blocksPerWave === 0) {
       this.currentWave++;
-      // Bonus points for completing a wave
-      this.score += this.currentWave * 25;
+      // Wave completion bonus
+      this.score += this.waveBonus * this.currentWave;
+      this.notifyScoreChange();
       this.notifyWaveChange();
     }
   }
@@ -161,24 +200,32 @@ export class GameLoop {
     const difficultyMultiplier = 1 + (this.currentWave - 1) * 0.15;
     this.dropInterval = Math.max(800, this.baseDropSpeed / difficultyMultiplier);
     
-    // Slightly increase floor coverage tolerance early on
+    // Slightly increase floor coverage tolerance in early waves
     if (this.currentWave <= 3) {
-      this.maxFloorCoverage = 0.8 + (this.currentWave - 1) * 0.05;
+      this.maxFloorCoverage = 0.85 + (3 - this.currentWave) * 0.05; // More forgiving in early waves
+    } else {
+      this.maxFloorCoverage = 0.85; // Standard tolerance after wave 3
     }
   }
 
   // Detonation control
   // @ts-ignore
   tryDetonate(x, y) {
-    if (!this.canDetonate) return false;
+    // Don't allow detonation if game is not in playing state
+    if (this.gameState !== 'playing' || !this.canDetonate) return false;
     
     if (this.physics.selectExplosiveBlock(x, y)) {
       this.canDetonate = false;
       this.lastDetonationTime = Date.now();
       
       const success = this.physics.detonateSelectedBlock();
-      if (success) {
-        this.score += 50;
+      if (success && this.gameState === 'playing') {
+        // Only update score if game is still active
+        const chainSize = this.physics.getLastChainReactionSize() || 1;
+        const multiplier = Math.min(chainSize * this.chainMultiplier, this.maxChainMultiplier);
+        const destroyScore = Math.floor(this.baseDestroyScore * multiplier * this.currentWave);
+        
+        this.score += destroyScore;
         this.notifyScoreChange();
       }
       
@@ -205,14 +252,15 @@ export class GameLoop {
     return {
       state: this.gameState,
       wave: this.currentWave,
-      score: this.score,
+      score: this.gameState === 'gameOver' ? this.finalScore : this.score,
       timeElapsed: this.timeElapsed,
       blocksDropped: this.blocksDropped,
       floorCoverage: this.physics.getFloorCoverage(),
-      nextDropIn: Math.max(0, this.dropInterval - (Date.now() - this.lastDropTime)),
-      canDetonate: this.canDetonate,
-      detonationCooldown: this.canDetonate ? 0 : 
-        Math.max(0, this.detonationCooldown - (Date.now() - this.lastDetonationTime)) / 1000
+      nextDropIn: this.gameState === 'playing' ? 
+        Math.max(0, this.dropInterval - (Date.now() - this.lastDropTime)) : 0,
+      canDetonate: this.canDetonate && this.gameState === 'playing',
+      detonationCooldown: this.gameState === 'playing' ? 
+        (this.canDetonate ? 0 : Math.max(0, this.detonationCooldown - (Date.now() - this.lastDetonationTime)) / 1000) : 0
     };
   }
 
@@ -231,7 +279,7 @@ export class GameLoop {
 
   notifyScoreChange() {
     if (this.onScoreChange) {
-      this.onScoreChange(this.score);
+      this.onScoreChange(this.gameState === 'gameOver' ? this.finalScore : this.score);
     }
   }
 
