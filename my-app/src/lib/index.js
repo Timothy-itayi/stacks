@@ -1,3 +1,4 @@
 export * from './physics.js';
-export * from './gameLoop.js';
+// @ts-ignore
+export * from './gameloop.js';
 export * from './gameState.js';
