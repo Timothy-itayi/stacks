@@ -4,6 +4,7 @@
   import * as physics from '$lib/physics.js';
   import { GameLoop } from '$lib/gameloop.js';
 
+
   interface ExplosionEvent {
     x: number;
     y: number;
@@ -26,7 +27,7 @@
   let app: Application;
   
   // Game state
-  let gameState = 'playing';
+  let currentGameState = 'playing';
   let currentWave = 1;
   let score = 0;
   let timeElapsed = 0;
@@ -166,8 +167,8 @@
     
     // Set up event listeners
     gameLoop.onGameStateChange = (newState: string) => {
-      debugState.lastGameState = gameState;
-      gameState = newState;
+      debugState.lastGameState = currentGameState;
+      currentGameState = newState;
       if (newState === 'gameOver') {
         const coverage = physics.getFloorCoverage();
         debugState.gameOverReason = timeRemaining <= 0 ? 
@@ -202,7 +203,7 @@
 
     // Small delay to ensure physics is ready before creating initial blocks
     setTimeout(() => {
-      if (gameState === 'playing') {
+      if (currentGameState === 'playing') {
         // Create initial crates for demo with proper positioning
         for (let i = 0; i < 3; i++) {
           const x = WALL_THICKNESS + Math.random() * (GAME_WIDTH - WALL_THICKNESS * 2);
@@ -216,7 +217,7 @@
 
     app.ticker.add((delta) => {
       // Only update physics if game is not over
-      if (gameState === 'playing') {
+      if (currentGameState === 'playing') {
         physics.update();
         gameLoop.update(delta);
       }
@@ -238,8 +239,8 @@
       detonationCooldown = state.detonationCooldown;
       
       // Check game over condition
-      if (physics.isGameOverCondition() && gameState === 'playing') {
-        gameState = 'gameOver';
+      if (physics.isGameOverCondition() && currentGameState === 'playing') {
+        currentGameState = 'gameOver';
         gameLoop.onGameStateChange('gameOver');
       }
     });
@@ -263,12 +264,12 @@
     // Reset local state
     currentHeight = 0;
     settledHeight = 0;
-    gameState = 'playing';
+    currentGameState = 'playing';
     debugState.physicsActive = true;
     
     // Create initial blocks with delay to ensure physics is ready
     setTimeout(() => {
-      if (gameState === 'playing') {
+      if (currentGameState === 'playing') {
         // Start physics engine
         physics.startPhysics();
         
@@ -279,16 +280,16 @@
   }
 
   function pauseGame() {
-    if (gameState === 'playing') {
+    if (currentGameState === 'playing') {
       gameLoop.pause();
-    } else if (gameState === 'paused') {
+    } else if (currentGameState === 'paused') {
       gameLoop.resume();
     }
   }
 
   // @ts-ignore
   function handleCanvasClick(event: MouseEvent) {
-    if (gameState !== 'playing') return;
+    if (currentGameState !== 'playing') return;
     
     const rect = container.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -303,8 +304,8 @@
 
   // Reactive statements for game state
   $: floorCoveragePercent = floorCoverage * 100;
-  $: isGameOver = gameState === 'gameOver';
-  $: isPaused = gameState === 'paused';
+  $: isGameOver = currentGameState === 'gameOver';
+  $: isPaused = currentGameState === 'paused';
 
   function toggleDebug() {
     showDebug = !showDebug;
@@ -460,7 +461,7 @@
       </div>
       
       <div class="space-y-1">
-        <div>Game State: {gameState}</div>
+        <div>Game State: {currentGameState}</div>
         <div>Previous State: {debugState.lastGameState}</div>
         <div class:text-red-400={!debugState.physicsActive}>Physics Active: {debugState.physicsActive ? 'Yes' : 'No'}</div>
         <div>Total Crates: {debugInfo.totalCrates}</div>
