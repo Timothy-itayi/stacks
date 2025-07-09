@@ -10,7 +10,7 @@ const __dirname = dirname(__filename);
 const config = {
   kit: {
     adapter: adapter({
-      runtime: 'nodejs18.x',
+      runtime: 'nodejs20.x',
       split: false
     }),
     alias: {
