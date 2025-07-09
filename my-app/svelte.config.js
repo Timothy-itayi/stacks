@@ -4,15 +4,12 @@ import adapter from '@sveltejs/adapter-vercel';
 const config = {
   kit: {
     adapter: adapter({
-      // if true, will deploy the app using edge functions
-      // (https://vercel.com/docs/concepts/functions/edge-functions)
-      // rather than serverless functions
-      edge: false,
-
-      // if true, will split your app into multiple functions
-      // instead of creating a single one for the entire app
+      runtime: 'nodejs18.x',
       split: false
-    })
+    }),
+    alias: {
+      $lib: './src/lib'
+    }
   }
 };
 
