@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { Application, Graphics } from 'pixi.js';
-  import * as physics from '../lib/physics.js';
-  import { GameLoop } from '../lib/gameloop.js';
+  import * as physics from '$lib/physics.js';
+  import { GameLoop } from '$lib/gameloop.js';
 
   interface ExplosionEvent {
     x: number;
@@ -554,11 +554,3 @@
     </div>
   {/if}
 </div>
-
-<style>
-  .game-container {
-    position: relative;
-    width: 700px;
-    height: 780px;
-  }
-</style>
