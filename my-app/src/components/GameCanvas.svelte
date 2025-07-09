@@ -3,6 +3,7 @@
   import { Application, Graphics } from 'pixi.js';
   import * as physics from '$lib/physics.js';
   import { GameLoop } from '$lib/gameloop.js';
+  import { gameState } from '$lib/gameState.js';
 
   interface ExplosionEvent {
     x: number;

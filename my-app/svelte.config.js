@@ -1,4 +1,10 @@
 import adapter from '@sveltejs/adapter-vercel';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -8,9 +14,11 @@ const config = {
       split: false
     }),
     alias: {
-      $lib: './src/lib'
+      $lib: resolve(__dirname, './src/lib'),
+      $components: resolve(__dirname, './src/components')
     }
-  }
+  },
+  preprocess: vitePreprocess()
 };
 
 export default config;
