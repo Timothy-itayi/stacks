@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { Application, Graphics } from 'pixi.js';
   import * as physics from '$lib/physics.js';
-  import { GameLoop } from '$lib/gameloop.js';
+  import { GameLoop } from '$lib/gameLoop.js';
 
 
   interface ExplosionEvent {
