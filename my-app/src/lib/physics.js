@@ -706,7 +706,7 @@ export function removeOffScreenCrates() {
   
   // @ts-ignore
   const GAME_HEIGHT = app.renderer.height;
-  const CLEANUP_Y = GAME_HEIGHT + 500; // Remove crates 500px below canvas (increased from 200px)
+  const CLEANUP_Y = GAME_HEIGHT + 1000; // Remove crates 500px below canvas (increased from 200px)
   
   const cratesToRemove = [];
   // @ts-ignore

@@ -401,7 +401,7 @@
 
     <!-- Instructions -->
     <div class="text-xs text-amber-300/70 mt-2 border-t border-amber-900/30 pt-2">
-      Click on a dirt block to detonate it. Explosive blocks clear nearby blocks.
+      Click on a <span class="text-[#8B4513]">dirt</span> block or <span class="text-[#32CD32]">grass-topped dirt</span> to destroy it. <span class="text-red-500">Explosive</span> blocks clear nearby blocks.
     </div>
   </div>
 

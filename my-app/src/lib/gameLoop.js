@@ -18,11 +18,11 @@ export class GameLoop {
     
     // Game mechanics
     this.dropInterval = 5000; // Start with 5 seconds between drops
-    this.blocksPerWave = 2; // Drop 2 blocks at a time
+    this.blocksPerWave = 5; // Drop 2 blocks at a time
     this.maxFloorCoverage = 1.0; // 100% settled floor coverage triggers game over
     this.baseDropSpeed = 5000; // 5 seconds between drops initially
     this.minDropInterval = 2000; // Minimum 2 seconds between drops (faster than before)
-    this.maxBlocksPerWave = 8; // Increased from 5 to 8 maximum blocks
+    this.maxBlocksPerWave = 10; // Increased from 5 to 8 maximum blocks
     
     // Detonation mechanics
     this.lastDetonationTime = 0;
