@@ -608,6 +608,13 @@ export function clearAllBodies() {
       }
     });
     
+    // Remove all particle graphics from the stage before clearing the array
+    for (const particle of particles) {
+      if (particle && particle.parent) {
+        particle.parent.removeChild(particle);
+      }
+    }
+    
     // Clear arrays
     crates = [];
     particles = [];
@@ -706,6 +713,13 @@ export function resetPhysics() {
         removeBlock(crate.body);
       }
     });
+    
+    // Remove all particle graphics from the stage before clearing the array
+    for (const particle of particles) {
+      if (particle && particle.parent) {
+        particle.parent.removeChild(particle);
+      }
+    }
     
     // Clear arrays
     crates = [];
@@ -885,6 +899,7 @@ export function triggerExplosion(x, y) {
 
         setTimeout(() => {
           try {
+            if (!isPhysicsRunning) return;
             if (crate.body && !crate.body.isExploded) {
               createBlockExplosionEffect(
                 crate.body.position.x,
