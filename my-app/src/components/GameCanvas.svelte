@@ -4,70 +4,24 @@
   import * as physics from '$lib/physics.js';
   import { GameLoop } from '$lib/gameLoop.js';
 
-
-  interface ExplosionEvent {
-    x: number;
-    y: number;
-    time: number;
-  }
-
-  interface DebugState {
-    lastScoreUpdate: number;
-    lastGameState: string;
-    lastExplosion: ExplosionEvent | null;
-    blockRemovals: Array<{ id: string; time: number }>;
-    gameOverReason: string;
-    physicsActive: boolean;
-  }
-
   let container: HTMLDivElement;
-  let currentHeight = 0;
-  let settledHeight = 0; // New: track only settled crates
   let gameLoop: GameLoop;
   let app: Application;
-  
-  // Game state
+
   let currentGameState = 'playing';
   let currentWave = 1;
   let score = 0;
   let timeElapsed = 0;
-  let floorCoverage = 0;
-  let nextDropIn = 0;
+  let fillLevel = 0;
   let detonationCooldown = 0;
-  let chainMultiplier = 1;
-  let timeRemaining = 60;
-  
-  // Debug info
-  let debugInfo = {
-    totalCrates: 0,
-    settledCrates: 0,
-    fallingCrates: 0
-  };
-  
-  // Enhanced debug state
-  let debugState: DebugState = {
-    lastScoreUpdate: 0,
-    lastGameState: '',
-    lastExplosion: null,
-    blockRemovals: [],
-    gameOverReason: '',
-    physicsActive: true
-  };
-  
-  // Debug floor sections
-  interface FloorSection {
-    hasSettledBlock: boolean;
-  }
-  let floorSections: FloorSection[] = [];
-  let showDebug = false; // Toggle for debug visualization
+  let gameOverReason = '';
   
   // Game config
   const GAME_CONFIG = {
     gameWidth: 700,
     gameHeight: 780,
     wallThickness: 30,
-    groundHeight: 60,
-    maxFloorCoverage: 1.0 // 100% floor coverage is game over
+    groundHeight: 60
   };
 
   onMount(async () => {
@@ -167,17 +121,11 @@
     
     // Set up event listeners
     gameLoop.onGameStateChange = (newState: string) => {
-      debugState.lastGameState = currentGameState;
       currentGameState = newState;
       if (newState === 'gameOver') {
-        const coverage = physics.getFloorCoverage();
-        debugState.gameOverReason = timeRemaining <= 0 ? 
-          "Time's Up!" : 
-          `Floor Coverage: ${(coverage * 100).toFixed(1)}%`;
-        debugState.physicsActive = false;
+        gameOverReason = gameLoop.getGameState().gameOverReason || 'fill';
         physics.stopPhysics();
       }
-      debugState = debugState;
     };
     
     gameLoop.onWaveChange = (wave: number) => {
@@ -185,17 +133,15 @@
     };
     
     gameLoop.onScoreChange = (newScore: number) => {
-      debugState.lastScoreUpdate = Date.now();
       score = newScore;
-      debugState = debugState;
     };
 
     gameLoop.onCooldownChange = (cooldown: number) => {
       detonationCooldown = cooldown;
     };
 
-    gameLoop.onTimeUpdate = (remaining: number) => {
-      timeRemaining = remaining;
+    gameLoop.onTimeUpdate = (elapsed: number) => {
+      timeElapsed = elapsed;
     };
 
     // Start the game loop first
@@ -222,26 +168,16 @@
         gameLoop.update(delta);
       }
       
-      // Update UI state
       const state = gameLoop.getGameState();
-      
-      // Get physics debug info
-      debugInfo = physics.getPhysicsDebugInfo();
-      
-      // Update floor section debug info
-      if (showDebug) {
-        floorSections = physics.getFloorSectionStates();
-      }
-      
       timeElapsed = state.timeElapsed;
-      const coverage = physics.getFloorCoverage();
-      floorCoverage = coverage;
+      fillLevel = physics.getFillLevel();
       detonationCooldown = state.detonationCooldown;
       
-      // Check game over condition
-      if (physics.isGameOverCondition() && currentGameState === 'playing') {
-        currentGameState = 'gameOver';
-        gameLoop.onGameStateChange('gameOver');
+      if ((physics.isGameOverCondition() || physics.wasProtectedBlockDestroyed()) && currentGameState === 'playing') {
+        if (physics.wasProtectedBlockDestroyed()) {
+          gameLoop.gameOverReason = 'protected';
+        }
+        gameLoop.endGame();
       }
     });
   });
@@ -261,12 +197,9 @@
     // Reset game loop
     gameLoop.reset();
     
-    // Reset local state
-    currentHeight = 0;
-    settledHeight = 0;
     currentGameState = 'playing';
-    debugState.physicsActive = true;
-    
+    gameOverReason = '';
+
     // Create initial blocks with delay to ensure physics is ready
     setTimeout(() => {
       if (currentGameState === 'playing') {
@@ -290,48 +223,17 @@
   // @ts-ignore
   function handleCanvasClick(event: MouseEvent) {
     if (currentGameState !== 'playing') return;
-    
+
     const rect = container.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    
-    const result = gameLoop.tryDetonate(x, y);
-    if (result) {
-      // Track successful interaction
-      handleExplosion(x, y);
-    }
+
+    gameLoop.tryDetonate(x, y);
   }
 
-  // Reactive statements for game state
-  $: floorCoveragePercent = floorCoverage * 100;
+  $: fillLevelPercent = fillLevel * 100;
   $: isGameOver = currentGameState === 'gameOver';
   $: isPaused = currentGameState === 'paused';
-
-  function toggleDebug() {
-    showDebug = !showDebug;
-  }
-
-  function handleExplosion(x: number, y: number) {
-    debugState.lastExplosion = {
-      x,
-      y,
-      time: Date.now()
-    };
-    debugState = debugState;
-  }
-
-  // Track block removals
-  function trackBlockRemoval(id: string) {
-    debugState.blockRemovals.push({
-      id,
-      time: Date.now()
-    });
-    // Keep only last 10 removals
-    if (debugState.blockRemovals.length > 10) {
-      debugState.blockRemovals.shift();
-    }
-    debugState = debugState;
-  }
 </script>
 
 <!-- Layout - Minimalistic version -->
@@ -342,33 +244,13 @@
     class="w-[700px] h-[780px] border border-neutral-800 overflow-hidden relative"
     on:click={handleCanvasClick}
   >
-    <!-- Debug floor sections -->
-    {#if showDebug}
-      <div class="absolute bottom-0 left-0 right-0 flex" style="height: 100px;">
-        {#each floorSections as section, i}
-          <div 
-            class="h-full border-r border-neutral-700 transition-colors duration-200"
-            style="width: {100/15}%; background-color: {
-              section.hasSettledBlock ? 'rgba(255, 0, 0, 0.3)' : 
-              'rgba(0, 255, 0, 0.1)'
-            }"
-          >
-            <div class="text-xs text-white opacity-50 text-center">
-              {i + 1}
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
   </div>
 
   <!-- Timer Display -->
   <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-neutral-900/80 text-amber-100 p-3 font-mono text-lg">
     <div class="flex items-center gap-2">
       <span class="text-amber-500/80">Time:</span>
-      <span class:text-red-400={timeRemaining <= 10}>
-        {Math.ceil(timeRemaining)}s
-      </span>
+      <span>{Math.floor(timeElapsed)}s</span>
     </div>
   </div>
 
@@ -386,16 +268,16 @@
 
     <div class="space-y-1">
       <div class="flex justify-between text-xs text-amber-500/80">
-        <span>Floor Space</span>
-        <span>{floorCoveragePercent.toFixed(0)}%</span>
+        <span>Fill Level</span>
+        <span>{fillLevelPercent.toFixed(0)}%</span>
       </div>
       <div class="w-full h-1 bg-neutral-800">
         <div
           class="h-full transition-all duration-300"
-          class:bg-lime-600={floorCoveragePercent <= 40}
-          class:bg-amber-500={floorCoveragePercent > 40 && floorCoveragePercent <= 60}
-          class:bg-red-500={floorCoveragePercent > 60}
-          style="width: {Math.min(floorCoveragePercent, 100)}%"
+          class:bg-lime-600={fillLevelPercent <= 40}
+          class:bg-amber-500={fillLevelPercent > 40 && fillLevelPercent <= 60}
+          class:bg-red-500={fillLevelPercent > 60}
+          style="width: {Math.min(fillLevelPercent, 100)}%"
         ></div>
       </div>
     </div>
@@ -408,16 +290,6 @@
 
   <!-- HUD top-right: minimal stats -->
   <div class="absolute top-4 right-4 bg-neutral-900/80 text-amber-100 p-3 w-56 space-y-2 font-mono text-sm">
-    <div class="flex items-center justify-between">
-      <span class="text-amber-500/80">Elapsed</span>
-      <span>{timeElapsed.toFixed(0)}s</span>
-    </div>
-
-    <div class="flex items-center justify-between">
-      <span class="text-amber-500/80">Next Drop</span>
-      <span>{nextDropIn}s</span>
-    </div>
-
     <div class="flex gap-2 mt-2">
       <button
         on:click={pauseGame}
@@ -434,108 +306,42 @@
     </div>
   </div>
 
-  <!-- Debug Toggle Button -->
-  <button
-    on:click={() => showDebug = !showDebug}
-    class="absolute bottom-4 right-4 px-3 py-1 bg-neutral-900/80 border border-amber-900/30 text-amber-100 text-xs hover:bg-amber-900/20"
-  >
-    {showDebug ? 'Hide Debug' : 'Show Debug'}
-  </button>
-
   <!-- Credit -->
   <div class="absolute bottom-4 left-4 bg-neutral-900/80 text-amber-100 p-3 w-56 font-mono text-xs opacity-60">
     Made by <a href="https://www.timothyitayi.com" target="_blank" rel="noopener noreferrer" class="text-amber-300 hover:text-amber-100 transition-colors">Timothy</a>
   </div>
 
-  <!-- Enhanced Debug Panel -->
-  {#if showDebug}
-    <div class="absolute top-4 right-4 bg-neutral-900/90 text-neutral-200 p-4 font-mono text-xs space-y-2 border border-neutral-700 max-w-xs" style="z-index: 100;">
-      <div class="flex justify-between items-center">
-        <span>Debug Mode</span>
-        <button
-          on:click={() => showDebug = false}
-          class="px-2 py-1 bg-neutral-800 hover:bg-neutral-700"
-        >
-          Close
-        </button>
-      </div>
-      
-      <div class="space-y-1">
-        <div>Game State: {currentGameState}</div>
-        <div>Previous State: {debugState.lastGameState}</div>
-        <div class:text-red-400={!debugState.physicsActive}>Physics Active: {debugState.physicsActive ? 'Yes' : 'No'}</div>
-        <div>Total Crates: {debugInfo.totalCrates}</div>
-        <div>Settled: {debugInfo.settledCrates}</div>
-        <div>Falling: {debugInfo.fallingCrates}</div>
-        <div>Floor Coverage: {(floorCoverage * 100).toFixed(1)}%</div>
-        
-        {#if debugState.lastScoreUpdate}
-          <div>Last Score Update: {((Date.now() - debugState.lastScoreUpdate) / 1000).toFixed(1)}s ago</div>
-        {/if}
-        
-        {#if debugState.lastExplosion}
-          <div>Last Explosion: {((Date.now() - debugState.lastExplosion.time) / 1000).toFixed(1)}s ago</div>
-          <div>At: ({debugState.lastExplosion.x}, {debugState.lastExplosion.y})</div>
-        {/if}
-
-        {#if debugState.blockRemovals.length > 0}
-          <div class="mt-2 pt-2 border-t border-neutral-700">
-            <div class="mb-1">Recent Block Removals:</div>
-            {#each debugState.blockRemovals.slice(-3) as removal}
-              <div class="text-xs opacity-75">
-                {((Date.now() - removal.time) / 1000).toFixed(1)}s ago
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    </div>
-  {/if}
-
   <!-- Game Over Modal -->
   {#if isGameOver}
     <div class="absolute inset-0 bg-black/90 flex items-center justify-center font-mono" style="z-index: 50;">
-      <div class="bg-neutral-900 text-amber-100 p-6 border border-amber-900/30 max-w-md">
-        <h2 class="text-xl mb-2 text-amber-300">Well Played!</h2>
-        <p class="text-amber-200/80 mb-4 text-sm">You kept clearing blocks until {debugState.gameOverReason === "Time's Up!" ? 'time ran out' : 'the demolition zone was full'}!</p>
+      <div class="bg-neutral-950 p-8 border border-neutral-700 max-w-md w-[420px] shadow-2xl">
+        <h2 class="text-2xl font-bold mb-3" class:text-red-500={gameOverReason === 'protected'} class:text-orange-400={gameOverReason !== 'protected'}>
+          {gameOverReason === 'protected' ? 'Protected Block Destroyed!' : 'The Box is Full!'}
+        </h2>
+        <p class="text-neutral-300 mb-5 text-sm leading-relaxed">
+          {#if gameOverReason === 'protected'}
+            You caught a <span class="text-red-400 font-semibold">protected block</span> in an explosion. Watch your blast radius!
+          {:else}
+            You survived <span class="text-white font-semibold">{timeElapsed.toFixed(1)}s</span> before the blocks overwhelmed you.
+          {/if}
+        </p>
         
-        <div class="space-y-3 mb-4">
-          <div class="bg-amber-900/20 p-3 rounded">
-            <p class="text-lg mb-1">Final Score: <span class="text-amber-300">{score}</span></p>
-            <div class="flex gap-4 text-amber-200/80">
-              <p>Wave {currentWave}</p>
-              <p>{timeElapsed.toFixed(1)}s</p>
-            </div>
-          </div>
-          
-          <!-- Stats box -->
-          <div class="bg-amber-900/10 p-3 rounded text-sm">
-            <p class="text-amber-300/90 mb-2">Demolition Stats</p>
-            <div class="grid grid-cols-2 gap-2 text-xs text-amber-200/70">
-              <div>Total Blocks: {debugInfo.totalCrates}</div>
-              <div>Settled Blocks: {debugInfo.settledCrates}</div>
-              <div>Zone Coverage: {(floorCoverage * 100).toFixed(1)}%</div>
-              {#if debugState.lastExplosion}
-                <div>Final Action: {((Date.now() - debugState.lastExplosion.time) / 1000).toFixed(1)}s ago</div>
-              {/if}
+        <div class="space-y-3 mb-6">
+          <div class="bg-neutral-800/80 border border-neutral-700 p-4 rounded">
+            <p class="text-lg text-white mb-1">Final Score: <span class="text-cyan-400 font-bold text-xl">{score}</span></p>
+            <div class="flex gap-6 text-neutral-400 text-sm">
+              <p>Wave <span class="text-neutral-200">{currentWave}</span></p>
+              <p>Survived: <span class="text-neutral-200">{timeElapsed.toFixed(1)}s</span></p>
             </div>
           </div>
         </div>
 
-        <div class="flex gap-2">
-          <button
-            on:click={resetGame}
-            class="flex-1 px-4 py-2 border border-amber-900/30 hover:bg-amber-900/20 text-sm transition-colors"
-          >
-            Clear Again
-          </button>
-          <button
-            on:click={() => showDebug = !showDebug}
-            class="px-4 py-2 border border-amber-900/30 hover:bg-amber-900/20 text-sm transition-colors"
-          >
-            {showDebug ? 'Hide Stats' : 'Show Stats'}
-          </button>
-        </div>
+        <button
+          on:click={resetGame}
+          class="w-full px-4 py-3 bg-neutral-800 border border-neutral-600 hover:bg-neutral-700 hover:border-neutral-500 text-white text-sm font-medium transition-colors rounded"
+        >
+          Play Again
+        </button>
       </div>
     </div>
   {/if}

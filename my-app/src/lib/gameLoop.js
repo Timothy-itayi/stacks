@@ -3,41 +3,37 @@ export class GameLoop {
   constructor(physics, gameConfig) {
     this.physics = physics;
     this.config = gameConfig;
-    this.gameState = 'playing'; // 'playing', 'paused', 'gameOver', 'won'
+    this.gameState = 'playing';
     this.currentWave = 1;
     this.blocksDropped = 0;
     this.score = 0;
     this.timeElapsed = 0;
-    this.finalScore = 0; // Store final score separately
-    this.gameTimeLimit = 60; // 60 seconds total game time
-    this.timeRemaining = 60;
+    this.finalScore = 0;
     this.nextDropTime = 0;
     this.detonationCooldown = 0;
     this.chainMultiplier = 1;
     this.lastUpdateTime = Date.now();
-    
+    this.gameOverReason = '';
+
     // Game mechanics
-    this.dropInterval = 5000; // Start with 5 seconds between drops
-    this.blocksPerWave = 5; // Drop 2 blocks at a time
-    this.maxFloorCoverage = 1.0; // 100% settled floor coverage triggers game over
-    this.baseDropSpeed = 5000; // 5 seconds between drops initially
-    this.minDropInterval = 2000; // Minimum 2 seconds between drops (faster than before)
-    this.maxBlocksPerWave = 10; // Increased from 5 to 8 maximum blocks
-    
+    this.dropInterval = 3500;
+    this.baseDropSpeed = 3500;
+
     // Detonation mechanics
     this.lastDetonationTime = 0;
     this.canDetonate = true;
-    
+
     // Block dropping pattern
-    this.explosiveBlockInterval = 6; // Drop explosive block every 6th block
-    
+    this.explosiveBlockInterval = 6;
+
     // Scoring system
-    this.baseDestroyScore = 10; // Base points for destroying a block
-    this.maxChainMultiplier = 5; // Cap the chain multiplier
-    
+    this.baseDestroyScore = 10;
+    this.maxChainMultiplier = 5;
+
     // Timers
     this.gameStartTime = Date.now();
-    
+    this.lastWaveTime = Date.now();
+
     // Events
     // @ts-ignore
     this.onGameStateChange = null;
@@ -49,26 +45,22 @@ export class GameLoop {
     this.onCooldownChange = null;
     // @ts-ignore
     this.onTimeUpdate = null;
-    
+
     this.boundUpdate = this.update.bind(this);
 
-    // Set up block destruction callback
-    this.physics.setBlockDestroyedCallback(() => {
-      // Time bonus removed
-    });
+    this.physics.setBlockDestroyedCallback(() => {});
   }
 
   start() {
     if (this.gameState !== 'playing') return;
-    
+
     const now = Date.now();
     this.gameStartTime = now;
+    this.lastWaveTime = now;
     this.nextDropTime = now;
     this.score = 0;
     this.finalScore = 0;
-    this.timeRemaining = this.gameTimeLimit;
-    
-    // Ensure we're in playing state
+
     this.gameState = 'playing';
     this.notifyGameStateChange();
     this.notifyScoreChange();
@@ -89,27 +81,25 @@ export class GameLoop {
   }
 
   reset() {
-    // Stop any ongoing game logic
     this.gameState = 'playing';
     this.currentWave = 1;
     this.blocksDropped = 0;
     this.score = 0;
     this.finalScore = 0;
     this.timeElapsed = 0;
-    this.timeRemaining = this.gameTimeLimit;
-    
-    // Reset timers
+
     const now = Date.now();
     this.gameStartTime = now;
+    this.lastWaveTime = now;
     this.nextDropTime = now;
     this.dropInterval = this.baseDropSpeed;
-    
-    // Reset detonation state
+
     this.canDetonate = true;
     this.lastDetonationTime = 0;
     this.detonationCooldown = 0;
-    
-    // Reset all notifications
+    this.gameOverReason = '';
+    this.physics.resetProtectedBlockFlag();
+
     this.notifyGameStateChange();
     this.notifyWaveChange();
     this.notifyScoreChange();
@@ -134,15 +124,8 @@ export class GameLoop {
 
     const currentTime = Date.now();
     this.timeElapsed = (currentTime - this.gameStartTime) / 1000;
-    this.timeRemaining = Math.max(0, this.gameTimeLimit - this.timeElapsed);
 
-    // Check if time's up
-    if (this.timeRemaining <= 0) {
-      this.endGame();
-      return;
-    }
-
-    // Update detonation cooldown
+    // Detonation cooldown
     if (!this.canDetonate) {
       const cooldownRemaining = this.detonationCooldown - (currentTime - this.lastDetonationTime);
       if (cooldownRemaining <= 0) {
@@ -155,27 +138,42 @@ export class GameLoop {
       }
     }
 
-    // Check game over condition - floor coverage
-    const floorCoverage = this.physics.getFloorCoverage();
-    if (floorCoverage >= this.maxFloorCoverage) {
+    // Game over when the box fills up
+    if (this.physics.isGameOverCondition()) {
+      this.gameOverReason = 'fill';
       this.endGame();
       return;
     }
 
-    // Handle block dropping only if game is still active
+    // Game over if a protected block was caught in an explosion
+    if (this.physics.wasProtectedBlockDestroyed()) {
+      this.gameOverReason = 'protected';
+      this.endGame();
+      return;
+    }
+
+    // Wave progression: every 15 seconds
+    if ((currentTime - this.lastWaveTime) / 1000 >= 15) {
+      this.currentWave++;
+      this.lastWaveTime = currentTime;
+      this.notifyWaveChange();
+    }
+
+    // Update difficulty based on elapsed time
+    this.updateDifficulty();
+
+    // Drop blocks
     if (currentTime - this.nextDropTime >= this.dropInterval) {
-      for (let i = 0; i < this.blocksPerWave; i++) {
+      const minBlocks = Math.min(5, 1 + Math.floor(this.timeElapsed / 30));
+      const dropCount = minBlocks + Math.floor(Math.random() * (10 - minBlocks + 1));
+      for (let i = 0; i < dropCount; i++) {
         this.dropBlock();
       }
       this.nextDropTime = currentTime;
     }
 
-    // Update difficulty over time
-    this.updateDifficulty();
-
-    // Notify time update
     if (this.onTimeUpdate) {
-      this.onTimeUpdate(this.timeRemaining);
+      this.onTimeUpdate(this.timeElapsed);
     }
   }
 
@@ -193,48 +191,23 @@ export class GameLoop {
     const maxY = -400;
     const y = Math.random() * (maxY - minY) + minY;
     
-    // Determine block type based on count and pattern
     let blockType;
     if ((this.blocksDropped + 1) % this.explosiveBlockInterval === 0) {
       blockType = 'explosive';
+    } else if ((this.blocksDropped + 1) % 18 === 0) {
+      blockType = 'protected';
     } else {
-      // Random selection between available non-explosive blocks
       const normalBlocks = ['dirt', 'stone', 'dirt_top'];
       blockType = normalBlocks[Math.floor(Math.random() * normalBlocks.length)];
     }
     
     this.physics.createCrate(x, y, blockType);
     this.blocksDropped++;
-
-    // Check for wave progression only if game is still active
-    if (this.gameState === 'playing' && this.blocksDropped % this.blocksPerWave === 0) {
-      this.currentWave++;
-      this.notifyWaveChange();
-    }
   }
 
   updateDifficulty() {
-    // More aggressive difficulty scaling
-    const difficultyMultiplier = 1 + (this.currentWave - 1) * 0.2; // Increased from 0.15 to 0.2
-    
-    // Drop interval decreases more quickly but has a lower minimum
-    this.dropInterval = Math.max(
-      this.minDropInterval,
-      this.baseDropSpeed / difficultyMultiplier
-    );
-    
-    // More aggressive block increase
-    // Start with 2 blocks, add 1 block every 2 waves
-    const baseBlocks = 2;
-    const additionalBlocks = Math.floor((this.currentWave - 1) / 2);
-    this.blocksPerWave = Math.min(this.maxBlocksPerWave, baseBlocks + additionalBlocks);
-    
-    // Adjust explosive block frequency based on wave
-    // More frequent explosive blocks in later waves
-    this.explosiveBlockInterval = Math.max(4, 8 - Math.floor(this.currentWave / 5));
-    
-    // Keep floor coverage tolerance at 100%
-    this.maxFloorCoverage = 1.0;
+    this.dropInterval = Math.max(800, this.baseDropSpeed - this.timeElapsed * 30);
+    this.explosiveBlockInterval = Math.max(3, 6 - Math.floor(this.timeElapsed / 20));
   }
 
   // Detonation control
@@ -282,13 +255,12 @@ export class GameLoop {
       state: this.gameState,
       wave: this.currentWave,
       score: this.gameState === 'gameOver' ? this.finalScore : this.score,
+      gameOverReason: this.gameOverReason,
       timeElapsed: this.timeElapsed,
       blocksDropped: this.blocksDropped,
-      floorCoverage: this.physics.getFloorCoverage(),
-      nextDropIn: this.gameState === 'playing' ? 
-        Math.max(0, this.dropInterval - (Date.now() - this.nextDropTime)) : 0,
+      fillLevel: this.physics.getFillLevel(),
       canDetonate: this.canDetonate && this.gameState === 'playing',
-      detonationCooldown: this.gameState === 'playing' ? 
+      detonationCooldown: this.gameState === 'playing' ?
         (this.canDetonate ? 0 : Math.max(0, this.detonationCooldown - (Date.now() - this.lastDetonationTime)) / 1000) : 0
     };
   }

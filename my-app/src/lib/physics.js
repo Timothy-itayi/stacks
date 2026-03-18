@@ -17,23 +17,24 @@ let crates = [];
 let mouseConstraint;
 
 // Available block aliases
-const BLOCK_ALIASES = ['dirt', 'explosive', 'stone', 'dirt_top'];
+const BLOCK_ALIASES = ['dirt', 'explosive', 'stone', 'dirt_top', 'protected'];
+const PROTECTED_SPRITES = ['block02', 'block03', 'block04'];
 
 /** @type {Array<Particle>} */
 let particles = [];
-const PARTICLE_COUNT = 20;
-const EXPLOSION_FORCE = 0.003;
-const EXPLOSION_RADIUS = 120;
-const DIRT_DESTROY_PARTICLES = 8; // Smaller number of particles for dirt destruction
-const DIRT_PARTICLE_SPEED = 2; // Slower particle speed for dirt
+const PARTICLE_COUNT = 30;
+const EXPLOSION_FORCE = 0.005;
+const EXPLOSION_RADIUS = 200;
+const DIRT_DESTROY_PARTICLES = 12;
+const DIRT_PARTICLE_SPEED = 3;
 
 // Chain reaction tracking
 let chainReactionCount = 0;
 let lastExplosionTime = 0;
 let lastChainSize = 0;
 const CHAIN_REACTION_WINDOW = 600;
-const MAX_PARTICLES = 200; // Limit total particles
-const MAX_CRATES = 100; // Limit total crates
+const MAX_PARTICLES = 200;
+const MAX_CRATES = 250;
 
 // Track the currently selected explosive block
 let selectedExplosiveBlock = null;
@@ -79,6 +80,16 @@ const BLOCK_PROPERTIES = {
     chamfer: { radius: 4 },
     angle: () => (Math.random() - 0.5) * 0.7,
     angularVelocity: () => (Math.random() - 0.5) * 0.045
+  },
+  protected: {
+    density: 0.003,
+    restitution: 0.05,
+    friction: 0.7,
+    frictionAir: 0.004,
+    frictionStatic: 0.6,
+    chamfer: { radius: 2 },
+    angle: () => (Math.random() - 0.5) * 0.3,
+    angularVelocity: () => (Math.random() - 0.5) * 0.02
   }
 };
 
@@ -115,22 +126,19 @@ class Particle extends Graphics {
   }
 }
 
-// Add to the top with other constants
-const FLOOR_SECTIONS = 30;
-const BLOCK_WIDTH = 40;
-
-// Track initial impact points of blocks that fell naturally
-let floorImpacts = new Map(); // Maps block ID to impact position
-let draggedBlocks = new Set(); // Track blocks that were dragged
-
 // Track which blocks are touching the ground
 let groundContacts = new Set();
 
 // Add physics engine state tracking
 let isPhysicsRunning = true;
 
-// Add new constant for actual max coverage
-const ACTUAL_MAX_COVERAGE = 0.8; // 80% actual coverage threshold
+// Height-based fill measurement
+const FILL_GAME_OVER_THRESHOLD = 0.80;
+const SETTLED_VELOCITY_THRESHOLD = 1.5;
+const GROUND_HEIGHT = 60;
+
+// Protected block game-over flag
+let protectedBlockDestroyed = false;
 
 // Add callback for block destruction
 let onBlockDestroyed = null;
@@ -144,15 +152,14 @@ export async function initPhysics(pixiApp) {
   // Clear any existing state
   crates = [];
   particles = [];
-  floorImpacts = new Map();
-  draggedBlocks = new Set();
   groundContacts = new Set();
   selectedExplosiveBlock = null;
+  protectedBlockDestroyed = false;
   
   app = pixiApp;
   engine = Engine.create({
-    // Disable gravity until fully initialized
-    gravity: { x: 0, y: 0 }
+    gravity: { x: 0, y: 0 },
+    enableSleeping: true
   });
   world = engine.world;
   runner = Runner.create();
@@ -189,31 +196,7 @@ export async function initPhysics(pixiApp) {
     constraint: { stiffness: 0.2, render: { visible: false } }
   });
 
-  // Track when blocks start being dragged
-  Events.on(mouseConstraint, 'startdrag', (event) => {
-    const body = event.body;
-    if (body && body.blockType) {
-      draggedBlocks.add(body.id);
-      // Remove any existing impact data if block was dragged
-      floorImpacts.delete(body.id);
-    }
-  });
-
   World.add(world, mouseConstraint);
-
-  // Collision detection for initial impacts
-  Events.on(engine, 'collisionStart', (event) => {
-    event.pairs.forEach((pair) => {
-      const { bodyA, bodyB } = pair;
-      
-      // Only record impacts for blocks that weren't dragged
-      if (bodyA.label === 'ground' && bodyB.blockType && !draggedBlocks.has(bodyB.id) && !floorImpacts.has(bodyB.id)) {
-        floorImpacts.set(bodyB.id, bodyB.position.x);
-      } else if (bodyB.label === 'ground' && bodyA.blockType && !draggedBlocks.has(bodyA.id) && !floorImpacts.has(bodyA.id)) {
-        floorImpacts.set(bodyA.id, bodyA.position.x);
-      }
-    });
-  });
 
   // Collision detection
   Events.on(engine, 'collisionStart', (event) => {
@@ -261,7 +244,10 @@ export async function loadAssets() {
           { alias: 'dirt', src: '/assets/extra_dirt_detail.png' },
           { alias: 'explosive', src: '/assets/explosive.png' },
           { alias: 'stone', src: '/assets/detail_stone.png' },
-          { alias: 'dirt_top', src: '/assets/extra_dirt_top.png' }
+          { alias: 'dirt_top', src: '/assets/extra_dirt_top.png' },
+          { alias: 'block02', src: '/assets/block02.png' },
+          { alias: 'block03', src: '/assets/block03.png' },
+          { alias: 'block04', src: '/assets/block04.png' }
         ]
       }
     ]
@@ -324,10 +310,9 @@ export function createCrate(x, y, alias = 'dirt') {
       return null;
     }
 
-    // Safety check for max crates
     if (crates.length >= MAX_CRATES) {
-      const oldestCrate = crates[0];
-      removeBlock(oldestCrate.body);
+      removeOffScreenCrates();
+      if (crates.length >= MAX_CRATES) return null;
     }
 
     // Validate block type
@@ -369,16 +354,19 @@ export function createCrate(x, y, alias = 'dirt') {
     body.createdAt = Date.now();
 
     let sprite;
+    const textureAlias = alias === 'protected'
+      ? PROTECTED_SPRITES[Math.floor(Math.random() * PROTECTED_SPRITES.length)]
+      : alias;
+
     try {
-    const texture = Assets.get(alias);
+    const texture = Assets.get(textureAlias);
     if (texture) {
       sprite = new Sprite(texture);
         sprite.anchor.set(0.5);
         sprite.width = width;
         sprite.height = height;
-        sprite.alpha = 0; // Start fully transparent
-        
-        // Add highlight effect for explosive blocks
+        sprite.alpha = 0;
+
         if (alias === 'explosive') {
           const highlight = new Graphics();
           highlight.lineStyle(2, 0xffff00, 0.5);
@@ -387,13 +375,20 @@ export function createCrate(x, y, alias = 'dirt') {
           highlight.visible = false;
           sprite.highlight = highlight;
         }
+
+        if (alias === 'protected') {
+          const glow = new Graphics();
+          glow.lineStyle(2, 0x00ffff, 0.7);
+          glow.drawRect(-width/2, -height/2, width, height);
+          sprite.addChild(glow);
+        }
     } else {
-      throw new Error(`Texture ${alias} not found`);
+      throw new Error(`Texture ${textureAlias} not found`);
     }
   } catch (error) {
-    console.warn(`Failed to load texture ${alias}, using fallback`, error);
+    console.warn(`Failed to load texture ${textureAlias}, using fallback`, error);
     sprite = createFallbackSprite(width, height, alias);
-      sprite.alpha = 0; // Start fully transparent
+      sprite.alpha = 0;
     }
 
     if (!sprite) return null;
@@ -547,130 +542,59 @@ export function getStackStatus() {
 }
 
 /**
- * Get the actual floor coverage (internal calculation)
+ * Get the actual fill level based on height of settled blocks (0 to 1)
  */
-function getActualFloorCoverage() {
-  if (!world || crates.length === 0) return 0;
-  
-  const GAME_WIDTH = app.renderer.width;
-  const WALL_THICKNESS = 60;
-  const sectionWidth = (GAME_WIDTH - (WALL_THICKNESS * 2)) / FLOOR_SECTIONS;
-  const sections = new Array(FLOOR_SECTIONS).fill(false);
-  
-  // Only use impact positions for blocks that fell naturally
+function getActualFillLevel() {
+  if (!world || !app || crates.length === 0) return 0;
+
+  const groundY = app.renderer.height - GROUND_HEIGHT;
+  let highestSettledY = groundY;
+  let settledCount = 0;
+
   for (const crate of crates) {
-    const impactX = floorImpacts.get(crate.body.id);
-    if (impactX !== undefined && !draggedBlocks.has(crate.body.id)) {
-      // Calculate which sections this block covers based on impact position
-      const blockLeft = impactX - BLOCK_WIDTH/2;
-      const blockRight = impactX + BLOCK_WIDTH/2;
-      
-      // Find all sections this block touches
-      const startSection = Math.floor((blockLeft - WALL_THICKNESS) / sectionWidth);
-      const endSection = Math.ceil((blockRight - WALL_THICKNESS) / sectionWidth);
-      
-      // Mark all covered sections
-      for (let i = Math.max(0, startSection); i < Math.min(FLOOR_SECTIONS, endSection); i++) {
-        sections[i] = true;
+    if (!crate || !crate.body) continue;
+    // Ignore blocks above the visible area — they're still falling in
+    if (crate.body.position.y < 0) continue;
+    const velocity = Math.abs(crate.body.velocity.x) + Math.abs(crate.body.velocity.y);
+    if (velocity < SETTLED_VELOCITY_THRESHOLD) {
+      settledCount++;
+      if (crate.body.position.y < highestSettledY) {
+        highestSettledY = crate.body.position.y;
       }
     }
   }
-  
-  const coveredSections = sections.filter(Boolean).length;
-  return coveredSections / FLOOR_SECTIONS;
+
+  if (settledCount < 2) return 0;
+
+  const fillHeight = groundY - highestSettledY;
+  return Math.max(0, Math.min(1, fillHeight / groundY));
 }
 
 /**
- * Get the floor coverage (scaled for UI display)
+ * Get fill level scaled for UI display (0 to 1, where 1 = game over)
  */
-export function getFloorCoverage() {
-  const actualCoverage = getActualFloorCoverage();
-  // Scale the actual coverage (0 to 0.8) up to display range (0 to 1.0)
-  return Math.min(1.0, actualCoverage / ACTUAL_MAX_COVERAGE);
-}
-
-/**
- * Get detailed floor section states for visualization
- */
-export function getFloorSectionStates() {
-  if (!world || crates.length === 0) {
-    return Array(FLOOR_SECTIONS).fill({ hasSettledBlock: false });
-  }
-  
-  const GAME_WIDTH = app.renderer.width;
-  const WALL_THICKNESS = 60;
-  const sectionWidth = (GAME_WIDTH - (WALL_THICKNESS * 2)) / FLOOR_SECTIONS;
-  const sections = Array(FLOOR_SECTIONS).fill().map(() => ({ hasSettledBlock: false }));
-  
-  // Only use impact positions for blocks that fell naturally
-    for (const crate of crates) {
-    const impactX = floorImpacts.get(crate.body.id);
-    if (impactX !== undefined && !draggedBlocks.has(crate.body.id)) {
-      // Calculate which sections this block covers based on impact position
-      const blockLeft = impactX - BLOCK_WIDTH/2;
-      const blockRight = impactX + BLOCK_WIDTH/2;
-      
-      // Find all sections this block touches
-      const startSection = Math.floor((blockLeft - WALL_THICKNESS) / sectionWidth);
-      const endSection = Math.ceil((blockRight - WALL_THICKNESS) / sectionWidth);
-      
-      // Mark all covered sections
-      for (let i = Math.max(0, startSection); i < Math.min(FLOOR_SECTIONS, endSection); i++) {
-        sections[i].hasSettledBlock = true;
-      }
-    }
-  }
-  
-  return sections;
+export function getFillLevel() {
+  const fill = getActualFillLevel();
+  return Math.min(1.0, fill / FILL_GAME_OVER_THRESHOLD);
 }
 
 /**
  * Check if the game over condition has been met
  */
 export function isGameOverCondition() {
-  const actualCoverage = getActualFloorCoverage();
-  // Game over when actual coverage reaches 80%
-  return actualCoverage >= ACTUAL_MAX_COVERAGE;
+  return getActualFillLevel() >= FILL_GAME_OVER_THRESHOLD;
+}
+
+export function wasProtectedBlockDestroyed() {
+  return protectedBlockDestroyed;
+}
+
+export function resetProtectedBlockFlag() {
+  protectedBlockDestroyed = false;
 }
 
 export function clearBottomRow() {
-  // @ts-ignore
-  if (!world) return 0;
-  
-  const GROUND_HEIGHT = 60;
-  // @ts-ignore
-  const GAME_HEIGHT = app.renderer.height;
-  const FLOOR_Y = GAME_HEIGHT - GROUND_HEIGHT;
-  
-  // Find crates near the floor
-  const cratesToRemove = [];
-  // @ts-ignore
-  for (const crate of crates) {
-    if (crate.body.position.y > FLOOR_Y - 80) {
-      cratesToRemove.push(crate);
-    }
-  }
-  
-  // Remove crates
-  for (const crate of cratesToRemove) {
-    // Remove from physics world
-    World.remove(world, crate.body);
-    
-    // Remove sprite from stage
-    if (crate.sprite && crate.sprite.parent) {
-      crate.sprite.parent.removeChild(crate.sprite);
-    }
-    
-    // Remove from crates array
-    // @ts-ignore
-    const index = crates.indexOf(crate);
-    if (index > -1) {
-      // @ts-ignore
-      crates.splice(index, 1);
-    }
-  }
-  
-  return cratesToRemove.length;
+  return 0;
 }
 
 export function clearAllBodies() {
@@ -688,13 +612,12 @@ export function clearAllBodies() {
     crates = [];
     particles = [];
     groundContacts = new Set();
-    floorImpacts = new Map();
-    draggedBlocks = new Set();
     
     // Reset state
     selectedExplosiveBlock = null;
     chainReactionCount = 0;
     lastExplosionTime = 0;
+    protectedBlockDestroyed = false;
   } catch (error) {
     console.error('Clear bodies error:', error);
   }
@@ -787,14 +710,13 @@ export function resetPhysics() {
     // Clear arrays
     crates = [];
     particles = [];
-    floorImpacts = new Map();
-    draggedBlocks = new Set();
     groundContacts = new Set();
     
     // Reset state
     selectedExplosiveBlock = null;
     chainReactionCount = 0;
     lastExplosionTime = 0;
+    protectedBlockDestroyed = false;
 
     // Reset engine and runner
     if (engine) {
@@ -912,7 +834,7 @@ export function triggerExplosion(x, y) {
       PARTICLE_COUNT * (1 + (multiplier - 1) * 0.5),
       MAX_PARTICLES - particles.length
     );
-    const explosionRadius = EXPLOSION_RADIUS * (1 + (multiplier - 1) * 0.1);
+    const explosionRadius = EXPLOSION_RADIUS * (1 + (multiplier - 1) * 0.25);
     
     // Create main explosion particles
     if (particles.length < MAX_PARTICLES) {
@@ -928,33 +850,42 @@ export function triggerExplosion(x, y) {
     // Apply explosion force to nearby crates
     const affectedBlocks = new Set();
     const validCrates = crates.filter(crate => crate && crate.body && !crate.body.isExploded);
-    
+
+    // Pre-scan: check if any protected block is in the blast radius
+    for (const crate of validCrates) {
+      const dx = crate.body.position.x - x;
+      const dy = crate.body.position.y - y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance < explosionRadius && crate.body.blockType === 'protected') {
+        protectedBlockDestroyed = true;
+      }
+    }
+
     validCrates.forEach(crate => {
       const dx = crate.body.position.x - x;
       const dy = crate.body.position.y - y;
       const distance = Math.sqrt(dx * dx + dy * dy);
 
       if (distance < explosionRadius) {
+        if (crate.body.blockType === 'protected') return;
+
         affectedBlocks.add(crate.body.id);
-        
-        // Apply force
+
         const forceMagnitude = EXPLOSION_FORCE * multiplier * Math.pow(1 - distance / explosionRadius, 2);
         const force = {
           x: (dx / distance) * forceMagnitude,
           y: (dy / distance) * forceMagnitude
         };
-        
+
         try {
           Body.applyForce(crate.body, crate.body.position, force);
         } catch (error) {
           console.error('Force application error:', error);
         }
-        
-        // Create particle effects for each affected block with delay based on distance
+
         setTimeout(() => {
           try {
             if (crate.body && !crate.body.isExploded) {
-              // Create particles for this block before removing it
               createBlockExplosionEffect(
                 crate.body.position.x,
                 crate.body.position.y,
@@ -1101,10 +1032,6 @@ function removeBlock(body) {
     if (index > -1) {
       crates.splice(index, 1);
     }
-
-    // Remove tracking data
-    floorImpacts.delete(body.id);
-    draggedBlocks.delete(body.id);
 
     // Notify about block destruction
     if (onBlockDestroyed && !body.isExploded) {
