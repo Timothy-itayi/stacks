@@ -425,19 +425,13 @@
   <!-- Pause Overlay -->
   {#if isPaused}
     <div class="absolute inset-0 bg-black/90 flex items-center justify-center font-mono px-4" style="z-index: 50;" transition:fade={{ duration: 200 }}>
-      <div class="bg-neutral-900 text-amber-100 p-6 border border-amber-900/30 w-full max-w-xs space-y-3">
-        <h2 class="text-lg mb-2 text-center">Paused</h2>
+      <div class="bg-neutral-900 text-amber-100 p-6 border border-amber-900/30 w-full max-w-xs">
+        <h2 class="text-lg mb-4 text-center">Paused</h2>
         <button
           on:click={pauseGame}
-          class="w-full px-4 py-3 border border-amber-900/30 hover:bg-amber-900/20 active:bg-amber-900/30 text-sm transition-colors"
+          class="w-full px-4 py-4 border border-amber-900/30 hover:bg-amber-900/20 active:bg-amber-900/30 text-sm transition-colors"
         >
           Resume
-        </button>
-        <button
-          on:click={resetGame}
-          class="w-full px-4 py-3 border border-red-900/30 hover:bg-red-900/20 active:bg-red-900/30 text-sm transition-colors text-red-300"
-        >
-          Restart
         </button>
       </div>
     </div>
