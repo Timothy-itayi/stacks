@@ -1,9 +1,28 @@
 <script>
+	import { onMount } from 'svelte';
 	import GameCanvas from '$components/GameCanvas.svelte';
+	import MobileGameCanvas from '$components/mobile/GameCanvas.svelte';
+
+	let isMobile = false;
+	let mounted = false;
+
+	onMount(() => {
+		mounted = true;
+		const check = () => { isMobile = window.innerWidth < 768; };
+		check();
+		window.addEventListener('resize', check);
+		return () => window.removeEventListener('resize', check);
+	});
 </script>
 
 <main>
-  <GameCanvas/>
+	{#if mounted}
+		{#if isMobile}
+			<MobileGameCanvas />
+		{:else}
+			<GameCanvas />
+		{/if}
+	{/if}
 </main>
 
 <style>

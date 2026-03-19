@@ -16,6 +16,10 @@ let app;
 let crates = [];
 let mouseConstraint;
 
+// Configurable layout dimensions (set during initPhysics, reused by resetPhysics)
+let physicsWallThickness = 60;
+let physicsGroundHeight = 60;
+
 // Available block aliases
 const BLOCK_ALIASES = ['dirt', 'explosive', 'stone', 'dirt_top', 'protected'];
 const PROTECTED_SPRITES = ['block02', 'block03', 'block04'];
@@ -32,6 +36,7 @@ const DIRT_PARTICLE_SPEED = 3;
 let chainReactionCount = 0;
 let lastExplosionTime = 0;
 let lastChainSize = 0;
+let lastExplosionBlockCount = 0;
 const CHAIN_REACTION_WINDOW = 600;
 const MAX_PARTICLES = 200;
 const MAX_CRATES = 250;
@@ -148,7 +153,7 @@ export function setBlockDestroyedCallback(callback) {
 }
 
 // @ts-ignore
-export async function initPhysics(pixiApp) {
+export async function initPhysics(pixiApp, config = {}) {
   // Clear any existing state
   crates = [];
   particles = [];
@@ -156,6 +161,9 @@ export async function initPhysics(pixiApp) {
   selectedExplosiveBlock = null;
   protectedBlockDestroyed = false;
   
+  physicsWallThickness = config.wallThickness || 60;
+  physicsGroundHeight = config.groundHeight || 60;
+
   app = pixiApp;
   engine = Engine.create({
     gravity: { x: 0, y: 0 },
@@ -167,10 +175,10 @@ export async function initPhysics(pixiApp) {
 
   const width = app.renderer.width;
   const height = app.renderer.height;
-  const wallThickness = 60;
+  const wallThickness = physicsWallThickness;
+  const groundHeight = physicsGroundHeight;
 
-  // Ground - adjusted for new width
-  const ground = Bodies.rectangle(width / 2, height - 30, width, 60, {
+  const ground = Bodies.rectangle(width / 2, height - groundHeight / 2, width, groundHeight, {
     isStatic: true,
     restitution: 0.3,
     label: 'ground'
@@ -381,6 +389,7 @@ export function createCrate(x, y, alias = 'dirt') {
           glow.lineStyle(2, 0x00ffff, 0.7);
           glow.drawRect(-width/2, -height/2, width, height);
           sprite.addChild(glow);
+          sprite.protectedGlow = glow;
         }
     } else {
       throw new Error(`Texture ${textureAlias} not found`);
@@ -460,6 +469,13 @@ export function update() {
             body.position.y > -40 && 
             body.position.y < app.renderer.height + 40) {
           sprite.alpha = 1;
+        }
+
+        if (body.blockType === 'protected' && sprite.protectedGlow) {
+          const t = Date.now() * 0.004;
+          sprite.protectedGlow.alpha = 0.4 + Math.sin(t) * 0.35;
+          const s = 1.0 + Math.sin(t * 0.75) * 0.05;
+          sprite.protectedGlow.scale.set(s);
         }
       }
     });
@@ -740,17 +756,16 @@ export function resetPhysics() {
       // Re-add ground and walls since they were cleared
       const width = app.renderer.width;
       const height = app.renderer.height;
-      const wallThickness = 60;
+      const wallThickness = physicsWallThickness;
+      const groundHeight = physicsGroundHeight;
 
-      // Ground
-      const ground = Bodies.rectangle(width / 2, height - 30, width, 60, {
+      const ground = Bodies.rectangle(width / 2, height - groundHeight / 2, width, groundHeight, {
         isStatic: true,
         restitution: 0.3,
         label: 'ground'
       });
       World.add(world, ground);
 
-      // Walls
       const leftWall = Bodies.rectangle(wallThickness / 2, height / 2, wallThickness, height, {
         isStatic: true,
         label: 'wall'
@@ -797,6 +812,8 @@ function createBlockExplosionEffect(x, y, blockType) {
   const grassParticleColors = [0x228B22, 0x32CD32, 0x90EE90];
   const stoneParticleColors = [0x808080, 0x696969, 0x778899];
   
+  const protectedParticleColors = [0x8B0000, 0xB22222, 0xDC143C];
+  
   let colors;
   switch(blockType) {
     case 'dirt_top':
@@ -806,7 +823,10 @@ function createBlockExplosionEffect(x, y, blockType) {
       colors = stoneParticleColors;
       break;
     case 'explosive':
-      colors = [0xFF4500, 0xFF6347, 0xFF7F50]; // Orange-red colors for explosive blocks
+      colors = [0xFF4500, 0xFF6347, 0xFF7F50];
+      break;
+    case 'protected':
+      colors = protectedParticleColors;
       break;
     default: // dirt
       colors = dirtParticleColors;
@@ -872,8 +892,22 @@ export function triggerExplosion(x, y) {
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance < explosionRadius && crate.body.blockType === 'protected') {
         protectedBlockDestroyed = true;
+        // Deep red particle burst to signal the fatal mistake
+        const protectedColors = [0x8B0000, 0xB22222, 0xDC143C, 0x660000];
+        const burstCount = 20;
+        for (let i = 0; i < burstCount; i++) {
+          const angle = (Math.PI * 2 * i) / burstCount + Math.random() * 0.3;
+          const speed = 2 + Math.random() * 3;
+          const size = 3 + Math.random() * 3;
+          const color = protectedColors[Math.floor(Math.random() * protectedColors.length)];
+          const particle = new Particle(crate.body.position.x, crate.body.position.y, angle, speed, color, size);
+          particles.push(particle);
+          app.stage.addChild(particle);
+        }
       }
     }
+
+    lastExplosionBlockCount = 0;
 
     validCrates.forEach(crate => {
       const dx = crate.body.position.x - x;
@@ -916,11 +950,16 @@ export function triggerExplosion(x, y) {
       }
     });
     
+    lastExplosionBlockCount = affectedBlocks.size;
     return multiplier;
   } catch (error) {
     console.error('Explosion error:', error);
     return 1;
   }
+}
+
+export function getLastExplosionBlockCount() {
+  return lastExplosionBlockCount;
 }
 
 /**

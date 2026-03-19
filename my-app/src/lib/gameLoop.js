@@ -14,6 +14,10 @@ export class GameLoop {
     this.chainMultiplier = 1;
     this.lastUpdateTime = Date.now();
     this.gameOverReason = '';
+    this.blocksCleared = 0;
+    this.highScore = 0;
+    this.isNewHighScore = false;
+    try { this.highScore = parseInt(localStorage.getItem('stacks_high_score') || '0', 10); } catch(e) {}
 
     // Game mechanics
     this.dropInterval = 3500;
@@ -45,6 +49,10 @@ export class GameLoop {
     this.onCooldownChange = null;
     // @ts-ignore
     this.onTimeUpdate = null;
+    // @ts-ignore
+    this.onCombo = null;
+    // @ts-ignore
+    this.onWaveMilestone = null;
 
     this.boundUpdate = this.update.bind(this);
 
@@ -98,6 +106,8 @@ export class GameLoop {
     this.lastDetonationTime = 0;
     this.detonationCooldown = 0;
     this.gameOverReason = '';
+    this.blocksCleared = 0;
+    this.isNewHighScore = false;
     this.physics.resetProtectedBlockFlag();
 
     this.notifyGameStateChange();
@@ -110,10 +120,16 @@ export class GameLoop {
 
   endGame() {
     if (this.gameState === 'playing') {
-      this.finalScore = this.score; // Store the final score
+      this.finalScore = this.score;
+
+      if (this.finalScore > this.highScore) {
+        this.highScore = this.finalScore;
+        this.isNewHighScore = true;
+        try { localStorage.setItem('stacks_high_score', String(this.highScore)); } catch(e) {}
+      }
+
       this.gameState = 'gameOver';
       this.notifyGameStateChange();
-      // Freeze the physics state
       this.physics.clearAllBodies();
     }
   }
@@ -157,6 +173,10 @@ export class GameLoop {
       this.currentWave++;
       this.lastWaveTime = currentTime;
       this.notifyWaveChange();
+
+      if (this.currentWave % 5 === 0 && this.onWaveMilestone) {
+        this.onWaveMilestone(this.currentWave);
+      }
     }
 
     // Update difficulty based on elapsed time
@@ -222,13 +242,22 @@ export class GameLoop {
       
       const success = this.physics.detonateSelectedBlock();
       if (success && this.gameState === 'playing') {
-        // Only update score if game is still active
         const chainSize = this.physics.getLastChainReactionSize() || 1;
         const multiplier = Math.min(chainSize * this.chainMultiplier, this.maxChainMultiplier);
         const destroyScore = Math.floor(this.baseDestroyScore * multiplier * this.currentWave);
         
         this.score += destroyScore;
         this.notifyScoreChange();
+
+        if (success === 'destroy') {
+          this.blocksCleared++;
+        } else if (success === 'explosion') {
+          const blastCount = this.physics.getLastExplosionBlockCount() || 0;
+          this.blocksCleared += 1 + blastCount;
+          if (blastCount > 1 && this.onCombo) {
+            this.onCombo(blastCount);
+          }
+        }
       }
       
       if (this.onCooldownChange) {
@@ -261,7 +290,10 @@ export class GameLoop {
       fillLevel: this.physics.getFillLevel(),
       canDetonate: this.canDetonate && this.gameState === 'playing',
       detonationCooldown: this.gameState === 'playing' ?
-        (this.canDetonate ? 0 : Math.max(0, this.detonationCooldown - (Date.now() - this.lastDetonationTime)) / 1000) : 0
+        (this.canDetonate ? 0 : Math.max(0, this.detonationCooldown - (Date.now() - this.lastDetonationTime)) / 1000) : 0,
+      blocksCleared: this.blocksCleared,
+      highScore: this.highScore,
+      isNewHighScore: this.isNewHighScore
     };
   }
 
